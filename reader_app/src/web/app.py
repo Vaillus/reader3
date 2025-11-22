@@ -1,53 +1,42 @@
 import os
 import pickle
+import tempfile
 from functools import lru_cache
 from typing import Optional
 from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from src.core.models import Book, ChapterContent, TOCEntry
+from src.core.models import Book, ChapterContent, TOCEntry, Highlight, BookMetadata
+from src.core.parser import parse_epub
+from src.integrations.kobo_service import KoboService
 
 app = FastAPI()
 
-# Determine paths relative to this file
-# Structure: reader_app/src/web/app.py -> templates is in reader_app/src/web/templates
-BASE_DIR = Path(__file__).resolve().parent.parent.parent # reader_app/
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 TEMPLATES_DIR = BASE_DIR / "src" / "web" / "templates"
 DATA_DIR = BASE_DIR / "data" / "library"
 
-print(f"Server starting...")
-print(f"Templates: {TEMPLATES_DIR}")
-print(f"Library: {DATA_DIR}")
-
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+kobo_service = KoboService()
 
 @lru_cache(maxsize=10)
 def load_book_cached(folder_name: str) -> Optional[Book]:
     file_path = DATA_DIR / folder_name / "book.pkl"
-    if not file_path.exists():
-        return None
-
+    if not file_path.exists(): return None
     try:
-        with open(file_path, "rb") as f:
-            book = pickle.load(f)
-        return book
-    except Exception as e:
-        print(f"Error loading book {folder_name}: {e}")
-        return None
+        with open(file_path, "rb") as f: return pickle.load(f)
+    except Exception: return None
 
 @app.get("/", response_class=HTMLResponse)
 async def library_view(request: Request):
-    """Lists all available processed books."""
     books = []
-    
     if DATA_DIR.exists():
         for item in os.listdir(DATA_DIR):
-            book_path = DATA_DIR / item
-            if book_path.is_dir():
+            if (DATA_DIR / item).is_dir():
                 book = load_book_cached(item)
                 if book:
                     books.append({
@@ -57,8 +46,53 @@ async def library_view(request: Request):
                         "chapters": len(book.spine),
                         "highlights": sum(len(c.highlights) for c in book.spine)
                     })
-
     return templates.TemplateResponse("library.html", {"request": request, "books": books})
+
+@app.get("/import", response_class=HTMLResponse)
+async def import_view(request: Request):
+    return templates.TemplateResponse("import.html", {"request": request})
+
+@app.get("/api/kobo/books")
+async def list_kobo_books():
+    books = kobo_service.list_books()
+    return JSONResponse(content=books)
+
+@app.post("/api/kobo/import/{book_id}")
+async def import_kobo_book(book_id: str):
+    # 1. Create temp dir
+    with tempfile.TemporaryDirectory() as tmpdirname:
+        # 2. Download
+        epub_path = kobo_service.download_book(book_id, tmpdirname)
+        if not epub_path:
+            raise HTTPException(status_code=500, detail="Download failed")
+        
+        # 3. Parse and Import
+        # We need a consistent naming strategy for the library folder
+        # We parse to get title first?
+        # Let's parse into a temporary location first to get metadata
+        # Actually parse_epub handles the whole flow including creating output dir.
+        # But we need to know the output dir name.
+        
+        # Simple approach: Import using book_id as safe name initially?
+        # Or read metadata from epub first?
+        
+        # Let's do a quick parse to get metadata
+        try:
+            from ebooklib import epub
+            book_tmp = epub.read_epub(str(epub_path))
+            title = book_tmp.get_metadata('DC', 'title')[0][0]
+            safe_title = "".join([c for c in title if c.isalnum() or c in ' -_']).strip().replace(' ', '_')
+            
+            library_folder = f"{safe_title}_data"
+            output_dir = DATA_DIR / library_folder
+            
+            # Now run full parse
+            final_book = parse_epub(str(epub_path), str(output_dir), fetch_kobo_highlights=True)
+            
+            return {"status": "success", "title": final_book.metadata.title, "library_id": library_folder}
+            
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
 
 @app.get("/read/{book_id}", response_class=HTMLResponse)
 async def redirect_to_first_chapter(book_id: str):
@@ -67,40 +101,24 @@ async def redirect_to_first_chapter(book_id: str):
 @app.get("/read/{book_id}/{chapter_index}", response_class=HTMLResponse)
 async def read_chapter(request: Request, book_id: str, chapter_index: int):
     book = load_book_cached(book_id)
-    if not book:
-        raise HTTPException(status_code=404, detail="Book not found")
-
-    if chapter_index < 0 or chapter_index >= len(book.spine):
-        raise HTTPException(status_code=404, detail="Chapter not found")
-
-    current_chapter = book.spine[chapter_index]
+    if not book: raise HTTPException(status_code=404, detail="Book not found")
+    if chapter_index < 0 or chapter_index >= len(book.spine): raise HTTPException(status_code=404, detail="Chapter not found")
     
+    current_chapter = book.spine[chapter_index]
     prev_idx = chapter_index - 1 if chapter_index > 0 else None
     next_idx = chapter_index + 1 if chapter_index < len(book.spine) - 1 else None
 
     return templates.TemplateResponse("reader.html", {
-        "request": request,
-        "book": book,
-        "current_chapter": current_chapter,
-        "chapter_index": chapter_index,
-        "book_id": book_id,
-        "prev_idx": prev_idx,
-        "next_idx": next_idx
+        "request": request, "book": book, "current_chapter": current_chapter,
+        "chapter_index": chapter_index, "book_id": book_id, "prev_idx": prev_idx, "next_idx": next_idx
     })
 
 @app.get("/read/{book_id}/images/{image_name}")
 async def serve_image(book_id: str, image_name: str):
-    safe_book_id = os.path.basename(book_id)
-    safe_image_name = os.path.basename(image_name)
-
-    img_path = DATA_DIR / safe_book_id / "images" / safe_image_name
-
-    if not img_path.exists():
-        raise HTTPException(status_code=404, detail="Image not found")
-
+    img_path = DATA_DIR / os.path.basename(book_id) / "images" / os.path.basename(image_name)
+    if not img_path.exists(): raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(img_path)
 
 def start_server():
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8123)
-

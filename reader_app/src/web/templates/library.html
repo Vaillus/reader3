@@ -20,8 +20,12 @@
     <div class="container">
         <h1>Library</h1>
 
+        <div style="margin-bottom: 20px;">
+            <a href="/import" class="btn" style="background: #27ae60;">+ Import from Kobo</a>
+        </div>
+
         {% if not books %}
-            <p>No processed books found. Run <code>reader3.py</code> on an epub first.</p>
+            <p>No processed books found. Import from Kobo or run <code>python run.py add &lt;file.epub&gt;</code>.</p>
         {% endif %}
 
         <div class="book-grid">
