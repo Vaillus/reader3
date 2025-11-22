@@ -1,0 +1,40 @@
+Initiating web-based activation
+
+kobo-book-downloader uses the same web-based activation method to log in as the Kobo e-readers.
+You will have to open the link below in your browser and enter the code, then you might need to login too if kobo.com asks you to.
+kobo-book-downloader will wait now and periodically check for the activation to complete.
+
+Open https://www.kobo.com/activate and enter 694563.
+
+Waiting for you to finish the activation...
+Waiting for you to finish the activation...
+Waiting for you to finish the activation...
+Waiting for you to finish the activation...
+Waiting for you to finish the activation...
+Waiting for you to finish the activation...
+Waiting for you to finish the activation...
+
+09564126-abb3-478f-96fa-45fff0bb7146 	 Bonus Millenium 4 by David Lagercrantz
+fbb47f5b-b110-45ab-a529-f30a73a15787 	 Chiens de guerre by Adrian Tchaikovsky
+26b4ebdb-13d7-419e-8d28-5c004f144d75 	 Darkome by Hannu Rajaniemi
+eafde677-a411-4b5e-a968-bc61cb34d839 	 L'appel de Cthulhu by Howard Phillips Lovecraft
+0844c89a-ad50-41dc-8b27-850246d47124 	 L'Empereur de toutes les maladies by Pierre Kaldy
+ae23b015-4928-4b25-b4bd-4d951a375d8d 	 L'Iliade (mythologie) by Homère
+9be6d57f-7e2e-4a62-8c95-0c9e7085ce03 	 L'Iliade et l'Odyssée by Homère
+47559a2f-a85f-4e33-ae03-801b48f35fcc 	 L'Odyssée (mythologie) by Homère
+7b963264-8f91-48ea-b8ad-5d617a5326dd 	 La Bhagavad Gitâ by Jean Herbert
+b1b349c2-3eb0-4125-a4e6-a5596b5c8554 	 La Trilogie Eisenhorn by Dan Abnett
+fbd0c1a3-6dc0-426e-b960-7c5318130b26 	 La Voie du tarot by Alexandro Jodorowsky
+172f0a12-bb17-4524-bd4d-dbc9ab387374 	 Le Bar était désert - Spécial Kobo by Agnès Martin-Lugand
+a2ada02e-9e23-4da6-8125-9316ead228c0 	 Le Dernier des Aînés by Adrian Tchaikovsky
+a778dc88-8ca9-401c-9d44-f80e212547a2 	 Les Meilleurs Récits de H.P. Lovecraft by H.P. Lovecraft
+2b3321d0-4ed1-488f-a30a-def6b6e944fb 	 Océanique by Nicolas Fructus
+ccd4a218-442c-4927-b83c-8a2c2665219a 	 Projet Dernière Chance by Andy Weir
+b7a1cbd1-ecf9-4577-bdf8-941c4b76dc11 	 Riddle-Master by Patricia A. McKillip
+be0a2d23-41a2-4c17-be03-62803a607240 	 Sorceleur (Witcher), T1 : Le Dernier Voeu (traduction révisée) by Andrzej Sapkowski
+ecd7af84-68fc-4795-a3ff-0c2720edd715 	 Sorceleur (Witcher), T2 : L'Épée de la providence (traduction révisée) by Andrzej Sapkowski
+30d0fe2d-e341-46fe-b7fd-170a0d01bc5b 	 Sorceleur (Witcher), T3 : Le Sang des elfes (traduction révisée) by Andrzej Sapkowski
+b23e42e5-5cb6-4ad8-b517-fd761c46aa22 	 The Forgotten Beasts of Eld by Patricia A. McKillip
+54cd8750-7c62-454c-9968-3e54f75833c3 	 The Quantum Thief by Hannu Rajaniemi
+f973344e-6021-445d-b9b9-c1e9110e24e5 	 The Scaling Era by Dwarkesh Patel
+e4f38911-b6ec-4a0b-96c2-e79474386b85 	 The Tainted Cup by Robert Jackson Bennett
