@@ -13,10 +13,74 @@
         /* Layout */
         body { margin: 0; padding: 0; display: flex; height: 100vh; overflow: hidden; font-family: "Georgia", serif; background: #fff; }
 
-        /* Sidebar */
-        #sidebar { width: 300px; background: #f8f9fa; border-right: 1px solid #e9ecef; overflow-y: auto; padding: 20px; flex-shrink: 0; }
-        .nav-header { font-family: -apple-system, sans-serif; font-weight: bold; color: #495057; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #dee2e6; }
-        .nav-home { display: block; margin-bottom: 20px; color: #3498db; text-decoration: none; font-family: -apple-system, sans-serif; font-size: 0.9em; }
+        /* Sidebar - Structure Flex pour Header Fixe */
+        #sidebar { 
+            width: 300px; 
+            background: #f8f9fa; 
+            border-right: 1px solid #e9ecef; 
+            display: flex; 
+            flex-direction: column; 
+            flex-shrink: 0; 
+            height: 100vh;
+        }
+        
+        /* Header Fixe de la Sidebar */
+        .sidebar-header-fixed {
+            padding: 20px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+            flex-shrink: 0;
+            z-index: 10;
+        }
+
+        /* Zone TOC qui défile indépendamment */
+        .sidebar-toc-content {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .nav-home { display: block; margin-bottom: 12px; color: #6c757d; text-decoration: none; font-family: -apple-system, sans-serif; font-size: 0.85em; font-weight: 500; transition: color 0.2s; }
+        .nav-home:hover { color: #3498db; }
+        
+        .book-title { font-family: -apple-system, sans-serif; font-weight: bold; color: #212529; margin-bottom: 15px; line-height: 1.3; }
+
+        /* Outils intégrés */
+        .sidebar-tools {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 10px;
+        }
+
+        .tool-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 8px;
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: -apple-system, sans-serif;
+            font-size: 0.9em;
+            color: #495057;
+            transition: all 0.2s;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+        }
+
+        .tool-btn:hover {
+            background: #e9ecef;
+            border-color: #ced4da;
+            color: #000;
+        }
+
+        /* État actif pour montrer quel panneau est ouvert */
+        .tool-btn.active {
+            background: #e7f1ff;
+            color: #0d6efd;
+            border-color: #0d6efd;
+        }
 
         /* TOC Tree */
         ul.toc-list { list-style: none; padding-left: 0; margin: 0; }
@@ -293,25 +357,6 @@
             outline: none;
         }
         
-        .toggle-notes-btn, .toggle-chat-btn {
-            position: fixed;
-            top: 20px;
-            z-index: 100;
-            background: #fff;
-            border: 1px solid #dee2e6;
-            padding: 8px 15px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-family: -apple-system, sans-serif;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-        }
-        .toggle-notes-btn {
-            right: 20px;
-        }
-        .toggle-chat-btn {
-            right: 140px;
-        }
-        .toggle-notes-btn:hover, .toggle-chat-btn:hover { background: #f8f9fa; }
 
         /* Content Styling (Basic normalization for the book HTML) */
         .book-content img { max-width: 100%; height: auto; display: block; margin: 20px auto; }
@@ -346,69 +391,279 @@
         .nav-btn:hover { background: #3498db; color: white; }
         .nav-btn.disabled { opacity: 0.5; pointer-events: none; border-color: #ccc; color: #ccc; }
 
+        /* Dark Mode Styles */
+        body.dark-mode {
+            background: #1a1a1a;
+            color: #e0e0e0;
+        }
+
+        body.dark-mode #sidebar {
+            background: #2d2d2d;
+            border-right-color: #404040;
+        }
+
+        body.dark-mode .sidebar-header-fixed {
+            background: #2d2d2d;
+            border-bottom-color: #404040;
+        }
+
+        body.dark-mode .sidebar-toc-content {
+            background: #2d2d2d;
+        }
+
+        body.dark-mode .nav-home {
+            color: #a0a0a0;
+        }
+
+        body.dark-mode .nav-home:hover {
+            color: #5dade2;
+        }
+
+        body.dark-mode .book-title {
+            color: #e0e0e0;
+        }
+
+        body.dark-mode .tool-btn {
+            background: #3a3a3a;
+            border-color: #505050;
+            color: #d0d0d0;
+        }
+
+        body.dark-mode .tool-btn:hover {
+            background: #4a4a4a;
+            border-color: #606060;
+            color: #fff;
+        }
+
+        body.dark-mode .tool-btn.active {
+            background: #1e3a5f;
+            color: #5dade2;
+            border-color: #5dade2;
+        }
+
+        body.dark-mode a.toc-link {
+            color: #c0c0c0;
+        }
+
+        body.dark-mode a.toc-link:hover {
+            color: #fff;
+        }
+
+        body.dark-mode a.toc-link.active {
+            color: #ff6b9d;
+        }
+
+        body.dark-mode #main {
+            background: #1a1a1a;
+        }
+
+        body.dark-mode .content-container {
+            color: #e0e0e0;
+        }
+
+        body.dark-mode .book-content h1,
+        body.dark-mode .book-content h2,
+        body.dark-mode .book-content h3 {
+            color: #f0f0f0;
+        }
+
+        body.dark-mode .book-content p {
+            color: #e0e0e0;
+        }
+
+        body.dark-mode #chat-panel,
+        body.dark-mode #notes-panel {
+            background: #2d2d2d;
+            border-left-color: #404040;
+        }
+
+        body.dark-mode .chat-header,
+        body.dark-mode .notes-header {
+            background: #3a3a3a;
+            border-bottom-color: #505050;
+            color: #e0e0e0;
+        }
+
+        body.dark-mode .chat-messages {
+            background: #2d2d2d;
+        }
+
+        body.dark-mode .chat-message.assistant-message {
+            background: #3a3a3a;
+            color: #e0e0e0;
+        }
+
+        body.dark-mode .chat-input-container {
+            background: #3a3a3a;
+            border-top-color: #505050;
+        }
+
+        body.dark-mode .chat-input {
+            background: #2d2d2d;
+            border-color: #505050;
+            color: #e0e0e0;
+        }
+
+        body.dark-mode .chat-input:focus {
+            border-color: #5dade2;
+        }
+
+        body.dark-mode .notes-editor {
+            background: #2d2d2d;
+            color: #e0e0e0;
+        }
+
+        body.dark-mode .chapter-nav {
+            border-top-color: #404040;
+        }
+
+        body.dark-mode .nav-btn {
+            color: #5dade2;
+            border-color: #5dade2;
+        }
+
+        body.dark-mode .nav-btn:hover {
+            background: #5dade2;
+            color: #1a1a1a;
+        }
+
+        body.dark-mode .nav-btn.disabled {
+            border-color: #505050;
+            color: #666;
+        }
+
+        body.dark-mode .selection-menu {
+            background: #3a3a3a;
+            border-color: #505050;
+        }
+
+        body.dark-mode .selection-menu button {
+            color: #e0e0e0;
+        }
+
+        body.dark-mode .selection-menu button:hover {
+            background: #4a4a4a;
+        }
+
+        body.dark-mode .context-chip {
+            background: #3a3a3a;
+            border-color: #505050;
+            color: #c0c0c0;
+        }
+
+        body.dark-mode .context-chip.active {
+            background: #1e3a5f;
+            color: #5dade2;
+            border-color: #5dade2;
+        }
+
+        body.dark-mode .context-chip:hover {
+            background: #4a4a4a;
+        }
+
+        body.dark-mode .quote-indicator {
+            background: #3a3a3a;
+            border-left-color: #ffc107;
+            color: #e0e0e0;
+        }
+
+        /* Highlights en mode nuit - couleurs plus visibles */
+        body.dark-mode .book-content .highlight {
+            background-color: #4a3a00;
+            border-bottom-color: #ffc107;
+            color: #ffd700;
+        }
+
+        body.dark-mode .book-content .highlight:hover {
+            background-color: #5a4a00;
+        }
+
+        body.dark-mode .manual-highlight {
+            background-color: #4a3a00;
+            border-bottom-color: #ffc107;
+            color: #ffd700;
+        }
+
+        body.dark-mode .manual-highlight:hover {
+            background-color: #5a4a00;
+        }
+
     </style>
 </head>
 <body>
 
     <!-- SIDEBAR -->
     <div id="sidebar">
-        <a href="/" class="nav-home">← Back to Library</a>
-        <div class="nav-header">{{ book.metadata.title }}</div>
+        <div class="sidebar-header-fixed">
+            <a href="/" class="nav-home">← Library</a>
+            <div class="book-title">{{ book.metadata.title }}</div>
+            
+            <div class="sidebar-tools">
+                <button class="tool-btn" id="btn-chat" onclick="toggleChat()">
+                    <span>💬</span> Chat
+                </button>
+                <button class="tool-btn" id="btn-notes" onclick="toggleNotes()">
+                    <span>📝</span> Notes
+                </button>
+                <button class="tool-btn" id="btn-dark-mode" onclick="toggleDarkMode()">
+                    <span id="dark-mode-icon">🌙</span> <span id="dark-mode-text">Nuit</span>
+                </button>
+            </div>
+        </div>
 
-        <!-- Recursive Macro for TOC -->
-        {% macro render_toc(items) %}
-            <ul class="toc-list">
-            {% for item in items %}
-                <li class="toc-item">
-                    <!--
-                        Matching Logic:
-                        If the TOC item filename matches the current chapter filename, mark active.
-                        Ideally we match spine indices, but Reader 3 TOC maps to filenames.
-                        We use a simple hash matching logic here.
-                    -->
-                    {% set is_active = current_chapter.href == item.file_href %}
+        <div class="sidebar-toc-content">
+            <!-- Recursive Macro for TOC -->
+            {% macro render_toc(items) %}
+                <ul class="toc-list">
+                {% for item in items %}
+                    <li class="toc-item">
+                        <!--
+                            Matching Logic:
+                            If the TOC item filename matches the current chapter filename, mark active.
+                            Ideally we match spine indices, but Reader 3 TOC maps to filenames.
+                            We use a simple hash matching logic here.
+                        -->
+                        {% set is_active = current_chapter.href == item.file_href %}
 
-                    <!--
-                       We need to find which linear chapter index (0, 1, 2) corresponds
-                       to this TOC entry file.
-                       Since that's hard to calculate in Jinja, we just link to the
-                       file anchor. BUT, to make our linear navigation work, we
-                       rely on the fact that the user is currently reading 'chapter_index'.
+                        <!--
+                           We need to find which linear chapter index (0, 1, 2) corresponds
+                           to this TOC entry file.
+                           Since that's hard to calculate in Jinja, we just link to the
+                           file anchor. BUT, to make our linear navigation work, we
+                           rely on the fact that the user is currently reading 'chapter_index'.
 
-                       Ideally, clicking a TOC link should find the 'index' of that file.
-                       For simplicity in this version: We link to the 'href' (filename)
-                       and let JavaScript or Backend handle it?
+                           Ideally, clicking a TOC link should find the 'index' of that file.
+                           For simplicity in this version: We link to the 'href' (filename)
+                           and let JavaScript or Backend handle it?
 
-                       Actually, let's just link to the file. The browser interprets #anchors.
-                       However, our router uses /read/book/INDEX.
+                           Actually, let's just link to the file. The browser interprets #anchors.
+                           However, our router uses /read/book/INDEX.
 
-                       SIMPLE FIX: We won't link the TOC to the route index in this simple version
-                       unless we build a map. We will visually show structure,
-                       but rely on "Previous/Next" for linear reading.
+                           SIMPLE FIX: We won't link the TOC to the route index in this simple version
+                           unless we build a map. We will visually show structure,
+                           but rely on "Previous/Next" for linear reading.
 
-                       BETTER FIX: Use JavaScript to match filenames.
-                    -->
-                    <a href="#" onclick="findAndGo('{{ item.file_href }}')"
-                       class="toc-link {% if is_active %}active{% endif %}">
-                        {{ item.title }}
-                    </a>
+                           BETTER FIX: Use JavaScript to match filenames.
+                        -->
+                        <a href="#" onclick="findAndGo('{{ item.file_href }}')"
+                           class="toc-link {% if is_active %}active{% endif %}">
+                            {{ item.title }}
+                        </a>
 
-                    {% if item.children %}
-                        {{ render_toc(item.children) }}
-                    {% endif %}
-                </li>
-            {% endfor %}
-            </ul>
-        {% endmacro %}
+                        {% if item.children %}
+                            {{ render_toc(item.children) }}
+                        {% endif %}
+                    </li>
+                {% endfor %}
+                </ul>
+            {% endmacro %}
 
-        {{ render_toc(book.toc) }}
+            {{ render_toc(book.toc) }}
+        </div>
     </div>
 
     <!-- MAIN CONTENT -->
     <div id="main">
-        <button class="toggle-chat-btn" onclick="toggleChat()">💬 Chat</button>
-        <button class="toggle-notes-btn" onclick="toggleNotes()">📝 Notes</button>
-        
         <div class="content-container">
             <div class="book-content">
                 {{ current_chapter.content | safe }}
@@ -539,15 +794,58 @@
         let currentSelection = null;
         let currentSessionId = null; // Variable d'état pour la session active
 
+        // --- DARK MODE LOGIC ---
+        function toggleDarkMode() {
+            const body = document.body;
+            const isDark = body.classList.toggle('dark-mode');
+            localStorage.setItem('darkMode', isDark);
+            
+            // Mise à jour de l'icône et du texte
+            const icon = document.getElementById('dark-mode-icon');
+            const text = document.getElementById('dark-mode-text');
+            if (icon && text) {
+                if (isDark) {
+                    icon.textContent = '☀️';
+                    text.textContent = 'Jour';
+                } else {
+                    icon.textContent = '🌙';
+                    text.textContent = 'Nuit';
+                }
+            }
+        }
+
+        // Load dark mode preference
+        if (localStorage.getItem('darkMode') === 'true') {
+            document.body.classList.add('dark-mode');
+            const icon = document.getElementById('dark-mode-icon');
+            const text = document.getElementById('dark-mode-text');
+            if (icon && text) {
+                icon.textContent = '☀️';
+                text.textContent = 'Jour';
+            }
+        }
+
         // Load chat preference
         if (localStorage.getItem('chatPanelOpen') === 'true') {
             chatPanel.classList.add('open');
+            const btnChat = document.getElementById('btn-chat');
+            if (btnChat) btnChat.classList.add('active');
         }
 
         function toggleChat() {
             const wasOpen = chatPanel.classList.contains('open');
             chatPanel.classList.toggle('open');
             localStorage.setItem('chatPanelOpen', chatPanel.classList.contains('open'));
+            
+            // Mise à jour visuelle du bouton
+            const btn = document.getElementById('btn-chat');
+            if (btn) {
+                if (chatPanel.classList.contains('open')) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            }
             
             // Scroll to bottom when opening
             if (!wasOpen && chatPanel.classList.contains('open')) {
@@ -1060,12 +1358,24 @@
         // Load preference - open if there's existing content or user preference
         if (localStorage.getItem('notesPanelOpen') === 'true' || noteEditor.value.trim() !== "") {
             notesPanel.classList.add('open');
+            const btnNotes = document.getElementById('btn-notes');
+            if (btnNotes) btnNotes.classList.add('active');
         }
 
         function toggleNotes() {
             const wasOpen = notesPanel.classList.contains('open');
             notesPanel.classList.toggle('open');
             localStorage.setItem('notesPanelOpen', notesPanel.classList.contains('open'));
+            
+            // Mise à jour visuelle du bouton
+            const btn = document.getElementById('btn-notes');
+            if (btn) {
+                if (notesPanel.classList.contains('open')) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            }
             
             // Start sync when opening, stop when closing
             if (!wasOpen && notesPanel.classList.contains('open')) {
