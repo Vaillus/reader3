@@ -23,6 +23,11 @@ from src.core.chat import ChatService
 from src.core.obsidian import get_chapter_note_content, save_chapter_note_content
 from src.core.highlighter import inject_highlights
 from src.integrations.kobo import fetch_highlights
+from src.core.chat_storage import (
+    load_chat_sessions, save_chat_sessions, create_new_session,
+    get_session_by_id, add_message_to_session, get_sessions_for_chapter,
+    delete_session
+)
 
 app = FastAPI()
 # Templates are in src/web/templates relative to reader_app directory
@@ -174,8 +179,110 @@ async def save_notes(book_id: str, chapter_index: int, note_update: NoteUpdate):
     
     return JSONResponse({"status": "saved"})
 
+# Chat Sessions API endpoints
+@app.post("/api/chat/sessions/new")
+async def create_chat_session(request: Request):
+    """Create a new empty chat session for a chapter."""
+    book_id = request.query_params.get("book_id")
+    chapter_index = request.query_params.get("chapter_index")
+    
+    if not book_id or chapter_index is None:
+        raise HTTPException(status_code=400, detail="book_id and chapter_index are required")
+    
+    try:
+        chapter_index = int(chapter_index)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="chapter_index must be an integer")
+    
+    # Verify book exists
+    book = load_book_cached(book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    
+    if chapter_index < 0 or chapter_index >= len(book.spine):
+        raise HTTPException(status_code=404, detail="Chapter not found")
+    
+    new_session = create_new_session(book_id, chapter_index)
+    
+    return JSONResponse({
+        "id": new_session.id,
+        "title": new_session.title,
+        "created_at": new_session.created_at
+    })
+
+
+@app.get("/api/chat/sessions/{book_id}/{chapter_index}")
+async def get_chat_history(book_id: str, chapter_index: int):
+    """Get all chat sessions for a specific chapter."""
+    book = load_book_cached(book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    
+    if chapter_index < 0 or chapter_index >= len(book.spine):
+        raise HTTPException(status_code=404, detail="Chapter not found")
+    
+    sessions = get_sessions_for_chapter(book_id, chapter_index)
+    
+    # Sort by date descending (most recent first)
+    sessions.sort(key=lambda s: s.created_at, reverse=True)
+    
+    sessions_data = []
+    for session in sessions:
+        preview = ""
+        if session.messages:
+            last_msg = session.messages[-1]
+            preview = last_msg["content"][:50]
+            if len(last_msg["content"]) > 50:
+                preview += "..."
+        
+        sessions_data.append({
+            "id": session.id,
+            "title": session.title,
+            "date": session.created_at,
+            "preview": preview
+        })
+    
+    return JSONResponse({"sessions": sessions_data})
+
+
+@app.get("/api/chat/session/{book_id}/{session_id}")
+async def get_session_content(book_id: str, session_id: str):
+    """Get the full content of a specific chat session."""
+    book = load_book_cached(book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    
+    session = get_session_by_id(book_id, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    return JSONResponse({
+        "id": session.id,
+        "title": session.title,
+        "created_at": session.created_at,
+        "chapter_index": session.chapter_index,
+        "messages": session.messages
+    })
+
+
+@app.delete("/api/chat/session/{book_id}/{session_id}")
+async def delete_chat_session(book_id: str, session_id: str):
+    """Delete a chat session."""
+    book = load_book_cached(book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    
+    session = get_session_by_id(book_id, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    delete_session(book_id, session_id)
+    
+    return JSONResponse({"status": "deleted"})
+
 # Chat API endpoints
 class ChatMessage(BaseModel):
+    session_id: Optional[str] = None
     message: str
     conversation_history: List[Dict[str, str]] = []
     quoted_text: Optional[str] = None
@@ -204,6 +311,23 @@ async def generate_chat_stream(chat_data: ChatMessage, book_id: str, chapter_ind
     
     current_chapter = book.spine[chapter_index]
     
+    # --- SESSION MANAGEMENT ---
+    current_session = None
+    if chat_data.session_id:
+        current_session = get_session_by_id(book_id, chat_data.session_id)
+    
+    # If no session ID provided or session not found, create a new one
+    if not current_session:
+        # Use first 30 characters of message as title
+        title = chat_data.message[:30] + ("..." if len(chat_data.message) > 30 else "")
+        current_session = create_new_session(book_id, chapter_index, title=title)
+        # Send session_init event to frontend
+        yield f"data: {json.dumps({'type': 'session_init', 'id': current_session.id})}\n\n"
+    
+    # Add user message to session
+    add_message_to_session(book_id, current_session.id, "user", chat_data.message)
+    # ---------------------------
+    
     # Determine notes content: use provided content from frontend if available, else load from disk
     if chat_data.current_notes is not None:
         current_notes = chat_data.current_notes
@@ -212,6 +336,7 @@ async def generate_chat_stream(chat_data: ChatMessage, book_id: str, chapter_ind
     
     print(f"[Chat] Received message: {chat_data.message[:100]}...")
     print(f"[Chat] Chapter: {current_chapter.title}")
+    print(f"[Chat] Session ID: {current_session.id}")
     print(f"[Chat] Context - Chapter: {chat_data.include_chapter}, Notes: {chat_data.include_notes}")
     print(f"[Chat] Notes length: {len(current_notes)}")
     print(f"[Chat] Conversation history length: {len(chat_data.conversation_history)}")
@@ -220,6 +345,7 @@ async def generate_chat_stream(chat_data: ChatMessage, book_id: str, chapter_ind
     yield f"data: {json.dumps({'type': 'assistant_start'})}\n\n"
     
     # Stream LLM response
+    full_response_text = ""
     try:
         for chunk in chat_service.send_message_stream(
             user_message=chat_data.message,
@@ -235,7 +361,11 @@ async def generate_chat_stream(chat_data: ChatMessage, book_id: str, chapter_ind
         ):
             # Escape HTML and send chunk
             escaped_chunk = html.escape(chunk)
+            full_response_text += chunk  # Accumulate full response
             yield f"data: {json.dumps({'type': 'chunk', 'content': escaped_chunk})}\n\n"
+        
+        # Save assistant response to session
+        add_message_to_session(book_id, current_session.id, "assistant", full_response_text)
         
         # Signal end of assistant message
         yield f"data: {json.dumps({'type': 'assistant_end'})}\n\n"

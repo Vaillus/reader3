@@ -261,6 +261,15 @@
         .add-chapter-btn:hover, .add-notes-btn:hover {
             background: #e9ecef;
         }
+
+        #chat-history-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        #chat-history-list div {
+            transition: background-color 0.2s;
+        }
         
         .notes-header {
             padding: 15px 20px;
@@ -430,8 +439,21 @@
         <!-- CHAT PANEL -->
         <div id="chat-panel">
             <div class="chat-header">
-                <span>Chat - {{ current_chapter.title }}</span>
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <span>Chat</span>
+                    <span id="chat-session-title" style="font-weight:normal; font-size:0.8em; opacity:0.7;"></span>
+                </div>
+                <div>
+                    <button onclick="toggleHistory()" class="add-chapter-btn" title="Historique">📜</button>
+                    <button onclick="startNewChat()" class="add-chapter-btn" title="Nouveau Chat">➕</button>
+                </div>
             </div>
+            
+            <!-- Overlay pour l'historique -->
+            <div id="chat-history-list" style="display:none; background:#f8f9fa; border-bottom:1px solid #ddd; max-height:200px; overflow-y:auto;">
+                <!-- Les sessions seront injectées ici -->
+            </div>
+            
             <div class="chat-messages" id="chat-messages">
                 <!-- Messages will be added here via HTMX -->
             </div>
@@ -515,6 +537,7 @@
         let selectedSnippets = []; // Array of {id, text, preview}
         let snippetCounter = 0;
         let currentSelection = null;
+        let currentSessionId = null; // Variable d'état pour la session active
 
         // Load chat preference
         if (localStorage.getItem('chatPanelOpen') === 'true') {
@@ -535,6 +558,102 @@
         function scrollChatToBottom() {
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
+
+        // --- SESSION MANAGEMENT ---
+        async function loadChatHistoryList() {
+            const listContainer = document.getElementById('chat-history-list');
+            try {
+                const bookId = encodeURIComponent('{{ book_id }}');
+                const chapterIndex = encodeURIComponent('{{ chapter_index }}');
+                const res = await fetch(`/api/chat/sessions/${bookId}/${chapterIndex}`);
+                const data = await res.json();
+                
+                if (data.sessions.length === 0) {
+                    listContainer.innerHTML = '<div style="padding:10px; font-style:italic; color:#666;">Aucun historique</div>';
+                    return;
+                }
+
+                listContainer.innerHTML = data.sessions.map(s => `
+                    <div onclick="loadSession('${s.id}')" style="padding:8px 15px; cursor:pointer; border-bottom:1px solid #eee;" onmouseover="this.style.background='#fff'" onmouseout="this.style.background='transparent'">
+                        <div style="font-weight:bold; font-size:0.9em;">${s.title}</div>
+                        <div style="font-size:0.75em; color:#666;">${new Date(s.date).toLocaleDateString('fr-FR')} ${new Date(s.date).toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'})} - ${s.preview || 'Nouvelle conversation'}</div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                console.error("Erreur chargement historique", e);
+                listContainer.innerHTML = '<div style="padding:10px; color:red;">Erreur lors du chargement</div>';
+            }
+        }
+
+        function toggleHistory() {
+            const list = document.getElementById('chat-history-list');
+            if (list.style.display === 'none') {
+                loadChatHistoryList();
+                list.style.display = 'block';
+            } else {
+                list.style.display = 'none';
+            }
+        }
+
+        async function startNewChat() {
+            // Réinitialiser l'UI
+            document.getElementById('chat-messages').innerHTML = '';
+            conversationHistory = [];
+            currentSessionId = null;
+            document.getElementById('chat-session-title').textContent = '';
+            document.getElementById('chat-history-list').style.display = 'none';
+            
+            // Optionnel : Forcer la création immédiate d'ID
+            try {
+                const bookId = encodeURIComponent('{{ book_id }}');
+                const chapterIndex = encodeURIComponent('{{ chapter_index }}');
+                const res = await fetch(`/api/chat/sessions/new?book_id=${bookId}&chapter_index=${chapterIndex}`, { method: 'POST' });
+                const data = await res.json();
+                currentSessionId = data.id;
+                document.getElementById('chat-session-title').textContent = data.title;
+            } catch (e) {
+                console.error("Erreur création nouvelle session", e);
+            }
+        }
+
+        async function loadSession(sessionId) {
+            try {
+                const bookId = encodeURIComponent('{{ book_id }}');
+                const res = await fetch(`/api/chat/session/${bookId}/${sessionId}`);
+                const data = await res.json();
+                
+                currentSessionId = data.id;
+                conversationHistory = [];
+                const container = document.getElementById('chat-messages');
+                container.innerHTML = '';
+
+                // Reconstituer l'interface
+                data.messages.forEach(msg => {
+                    const div = document.createElement('div');
+                    div.className = `chat-message ${msg.role === 'user' ? 'user-message' : 'assistant-message'}`;
+                    const contentDiv = document.createElement('div');
+                    contentDiv.className = 'message-content';
+                    // Convert newlines to <br> for display
+                    contentDiv.innerHTML = msg.content.replace(/\n/g, '<br>');
+                    div.appendChild(contentDiv);
+                    container.appendChild(div);
+                    
+                    // Reconstruire l'historique pour le contexte LLM
+                    conversationHistory.push({ role: msg.role, content: msg.content });
+                });
+
+                document.getElementById('chat-session-title').textContent = data.title;
+                document.getElementById('chat-history-list').style.display = 'none';
+                scrollChatToBottom();
+                
+                // Update conversation history for LLM context
+                updateConversationHistory();
+            } catch (e) {
+                console.error("Erreur chargement session", e);
+                alert('Erreur lors du chargement de la session');
+            }
+        }
+        // ---------------------------
 
         function isUserAtBottom() {
             // Check if user is near the bottom (within 50px threshold)
@@ -600,6 +719,7 @@
 
             // Prepare JSON body
             const body = {
+                session_id: currentSessionId,
                 message: message,
                 conversation_history: conversationHistory,
                 quoted_text: selectedText || null,
@@ -693,6 +813,19 @@
                                 throw new Error(data.content);
                             } else if (data.type === 'assistant_end') {
                                 // Streaming complete
+                            } else if (data.type === 'session_init') {
+                                // New session created, store the ID
+                                currentSessionId = data.id;
+                                // Load session title
+                                if (currentSessionId) {
+                                    const bookId = encodeURIComponent('{{ book_id }}');
+                                    fetch(`/api/chat/session/${bookId}/${currentSessionId}`)
+                                        .then(res => res.json())
+                                        .then(sessionData => {
+                                            document.getElementById('chat-session-title').textContent = sessionData.title;
+                                        })
+                                        .catch(e => console.error("Error loading session title", e));
+                                }
                             }
                         }
                     }
