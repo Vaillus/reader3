@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ book.metadata.title }}</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <!-- Rangy Libraries for manual highlighting -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/rangy/1.3.1/rangy-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/rangy/1.3.1/rangy-classapplier.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/rangy/1.3.1/rangy-highlighter.min.js"></script>
     <style>
         /* Layout */
         body { margin: 0; padding: 0; display: flex; height: 100vh; overflow: hidden; font-family: "Georgia", serif; background: #fff; }
@@ -313,6 +317,17 @@
             cursor: help;
         }
         .book-content .highlight:hover {
+            background-color: #ffe69c;
+        }
+        
+        /* Manual highlights (created via Rangy) - SAME STYLE AS KOBO */
+        .manual-highlight {
+            background-color: #fff3cd;
+            padding: 2px 0;
+            border-bottom: 2px solid #ffc107;
+            cursor: pointer;
+        }
+        .manual-highlight:hover {
             background-color: #ffe69c;
         }
 
@@ -710,10 +725,11 @@
                 }
                 
                 if (isInBookContent && selectedTextContent.length > 0) {
-                    // Store selection info
+                    // Store selection info (cloner le range pour éviter qu'il soit invalidé)
+                    const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
                     currentSelection = {
                         text: selectedTextContent,
-                        range: selection.rangeCount > 0 ? selection.getRangeAt(0) : null
+                        range: range ? range.cloneRange() : null
                     };
                     
                     // Show floating menu near selection
@@ -747,7 +763,10 @@
                 menu = document.createElement('div');
                 menu.id = 'selection-menu';
                 menu.className = 'selection-menu';
-                menu.innerHTML = '<button onclick="addSnippetFromSelection()">📎 Ajouter au contexte</button>';
+                menu.innerHTML = `
+                    <button onclick="addSnippetFromSelection()">📎 Ajouter au contexte</button>
+                    <button onclick="highlightFromSelection()">✏️ Surligner</button>
+                `;
                 document.body.appendChild(menu);
             }
             
@@ -964,6 +983,158 @@
                 saveStatus.style.color = "red";
             }
         }
+
+        // --- MANUAL HIGHLIGHTER (RANGY) ---
+        let highlighter;
+        let highlightApplier;
+
+        function initializeHighlighter() {
+            if (typeof rangy === 'undefined' || !rangy.init) {
+                console.warn('Rangy not loaded, manual highlighting disabled');
+                return;
+            }
+            
+            rangy.init();
+
+            highlighter = rangy.createHighlighter();
+            
+            // Création de la classe 'manual-highlight'
+            highlightApplier = rangy.createClassApplier("manual-highlight", {
+                ignoreWhiteSpace: true,
+                tagNames: ["span"]
+            });
+
+            highlighter.addClassApplier(highlightApplier);
+            
+            const container = document.querySelector('.book-content');
+            if (!container) return;
+
+            // ACTION : Supprimer au clic droit
+            container.addEventListener('mousedown', function(e) {
+                // Bouton droit (2) sur un élément déjà surligné
+                if (e.button === 2 && e.target.classList.contains('manual-highlight')) {
+                    e.preventDefault(); // Empêche le menu contextuel
+                    
+                    const textToRemove = e.target.textContent.trim();
+                    const elementToRemove = e.target;
+                    
+                    // Récupère l'objet "highlight" associé à l'élément DOM (si créé dans cette session)
+                    const h = highlighter.getHighlightForElement(elementToRemove);
+                    
+                    if (h) {
+                        // Cas 1: Highlight actif de la session (géré par Rangy Highlighter)
+                        highlighter.removeHighlights([h]);
+                    } else {
+                        // Cas 2: Highlight chargé depuis le serveur (HTML statique)
+                        // On fait un "unwrap" manuel simple du DOM
+                        const parent = elementToRemove.parentNode;
+                        if (parent) {
+                            // Déplacer tous les enfants du span avant le span lui-même
+                            while (elementToRemove.firstChild) {
+                                parent.insertBefore(elementToRemove.firstChild, elementToRemove);
+                            }
+                            // Supprimer le span vide
+                            parent.removeChild(elementToRemove);
+                            // Normaliser pour fusionner les nœuds de texte adjacents
+                            parent.normalize();
+                        }
+                    }
+
+                    // Supprimer côté serveur
+                    deleteManualHighlight(textToRemove);
+                }
+            });
+        }
+
+        // Appels API pour sauvegarder/supprimer les highlights manuels
+        async function saveManualHighlight(text) {
+            try {
+                const response = await fetch('/api/highlights/add', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        book_id: "{{ book_id }}",
+                        chapter_index: {{ chapter_index }},
+                        text: text,
+                        annotation: "Manuel"
+                    })
+                });
+                if (!response.ok) {
+                    console.error("Erreur sauvegarde highlight:", await response.text());
+                }
+            } catch (e) {
+                console.error("Erreur lors de la sauvegarde du highlight:", e);
+            }
+        }
+
+        async function deleteManualHighlight(text) {
+            try {
+                const response = await fetch('/api/highlights/remove', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        book_id: "{{ book_id }}",
+                        chapter_index: {{ chapter_index }},
+                        text: text
+                    })
+                });
+                if (!response.ok) {
+                    console.error("Erreur suppression highlight:", await response.text());
+                }
+            } catch (e) {
+                console.error("Erreur lors de la suppression du highlight:", e);
+            }
+        }
+
+        // Fonction pour surligner depuis le menu de sélection
+        function highlightFromSelection() {
+            if (!currentSelection || !currentSelection.text) return;
+            
+            // Vérifier que Rangy est initialisé
+            if (typeof rangy === 'undefined' || !highlightApplier) {
+                console.error('Rangy not initialized');
+                return;
+            }
+            
+            const text = currentSelection.text.trim();
+            if (!text || text.length < 2) return;
+            
+            // Restaurer la sélection depuis le range sauvegardé
+            const selection = rangy.getSelection();
+            selection.removeAllRanges();
+            
+            if (currentSelection.range) {
+                try {
+                    // Cloner le range pour éviter les problèmes de référence
+                    const clonedRange = currentSelection.range.cloneRange();
+                    selection.addRange(clonedRange);
+                } catch (e) {
+                    console.error('Error restoring selection:', e);
+                    // Si le range est invalide, on ne peut pas surligner
+                    hideSelectionMenu();
+                    return;
+                }
+            } else {
+                console.error('No range stored in currentSelection');
+                hideSelectionMenu();
+                return;
+            }
+            
+            // Appliquer le style visuel
+            highlightApplier.applyToSelection();
+            
+            // Désélectionner pour la propreté
+            selection.removeAllRanges();
+            
+            // Sauvegarder côté serveur
+            saveManualHighlight(text);
+            
+            // Cacher le menu
+            hideSelectionMenu();
+        }
+
+        // Lancer au chargement
+        document.addEventListener('DOMContentLoaded', initializeHighlighter);
     </script>
 </body>
 </html>

@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from bs4 import BeautifulSoup
 
 # Load .env file from project root (1 level up from reader_app)
 env_path = Path(__file__).resolve().parent.parent / ".env"
@@ -20,6 +21,8 @@ load_dotenv(env_path)
 from reader3 import Book, BookMetadata, ChapterContent, TOCEntry, Highlight
 from src.core.chat import ChatService
 from src.core.obsidian import get_chapter_note_content, save_chapter_note_content
+from src.core.highlighter import inject_highlights
+from src.integrations.kobo import fetch_highlights
 
 app = FastAPI()
 # Templates are in src/web/templates relative to reader_app directory
@@ -52,6 +55,15 @@ def load_book_cached(folder_name: str) -> Optional[Book]:
     except Exception as e:
         print(f"Error loading book {folder_name}: {e}")
         return None
+
+def save_book_to_disk(folder_name: str, book: Book):
+    """Helper pour sauvegarder le pickle."""
+    file_path = os.path.join(BOOKS_DIR, folder_name, "book.pkl")
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    with open(file_path, "wb") as f:
+        pickle.dump(book, f)
+    # Invalider le cache pour forcer le rechargement
+    load_book_cached.cache_clear()
 
 @app.get("/", response_class=HTMLResponse)
 async def library_view(request: Request):
@@ -256,6 +268,132 @@ async def send_chat_message(request: Request, chat_data: ChatMessage):
     ''')
     
     return HTMLResponse(content="".join(html_parts))
+
+# Highlights API endpoints
+class HighlightPayload(BaseModel):
+    book_id: str
+    chapter_index: int
+    text: str
+    annotation: Optional[str] = None
+
+@app.post("/api/highlights/add")
+async def add_highlight_endpoint(payload: HighlightPayload):
+    """Ajoute un highlight manuel sans casser le contenu existant."""
+    book = load_book_cached(payload.book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    
+    if payload.chapter_index < 0 or payload.chapter_index >= len(book.spine):
+        raise HTTPException(status_code=404, detail="Chapter not found")
+    
+    current_chapter = book.spine[payload.chapter_index]
+    
+    # 1. Créer l'objet Highlight
+    new_hl = Highlight(
+        text=payload.text,
+        annotation=payload.annotation or "Manuel",
+        date="",
+        chapter_id=""
+    )
+    
+    # 2. Vérifier si ce highlight n'existe pas déjà (éviter doublons)
+    existing_texts = {h.text.strip() for h in current_chapter.highlights}
+    if payload.text.strip() in existing_texts:
+        return JSONResponse({"status": "already_exists"})
+    
+    # 3. Mettre à jour la liste des highlights du chapitre
+    current_chapter.highlights.append(new_hl)
+    
+    # 4. Injecter dans le HTML (PERSISTANCE)
+    # On parse le contenu actuel (qui contient déjà des spans) pour ajouter le nouveau
+    soup = BeautifulSoup(current_chapter.content, 'html.parser')
+    
+    # On utilise la fonction existante inject_highlights pour wrapper le texte
+    inject_highlights(soup, [new_hl])
+    
+    current_chapter.content = str(soup)
+    
+    # 5. Sauvegarder sur le disque
+    save_book_to_disk(payload.book_id, book)
+    
+    return JSONResponse({"status": "added"})
+
+@app.post("/api/highlights/remove")
+async def remove_highlight_endpoint(payload: HighlightPayload):
+    """Supprime un highlight manuel."""
+    book = load_book_cached(payload.book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    
+    if payload.chapter_index < 0 or payload.chapter_index >= len(book.spine):
+        raise HTTPException(status_code=404, detail="Chapter not found")
+        
+    chapter = book.spine[payload.chapter_index]
+    
+    # 1. Retirer de la liste (filtrer par texte exact)
+    original_count = len(chapter.highlights)
+    chapter.highlights = [h for h in chapter.highlights if h.text.strip() != payload.text.strip()]
+    
+    # 2. Retirer du HTML (unwrap les spans manual-highlight qui contiennent ce texte)
+    soup = BeautifulSoup(chapter.content, 'html.parser')
+    for span in soup.find_all('span', class_='manual-highlight'):
+        if span.get_text().strip() == payload.text.strip():
+            span.unwrap()  # Enlève la balise <span> mais garde le texte
+    
+    chapter.content = str(soup)
+    
+    # Sauvegarder seulement si quelque chose a changé
+    if len(chapter.highlights) < original_count:
+        save_book_to_disk(payload.book_id, book)
+    
+    return JSONResponse({"status": "removed"})
+
+@app.post("/api/books/{book_id}/sync-highlights")
+async def sync_kobo_highlights(book_id: str):
+    """
+    Synchronise avec Kobo de manière ADDITIVE.
+    Ne supprime pas les highlights manuels existants.
+    """
+    book = load_book_cached(book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    # 1. Récupérer les highlights frais depuis la DB Kobo
+    kobo_highlights = fetch_highlights(book.metadata.title)
+    if not kobo_highlights:
+        return JSONResponse({"status": "no_new_highlights", "count": 0})
+
+    added_count = 0
+    
+    # 2. Pour chaque chapitre, on vérifie quels highlights Kobo manquent
+    for chapter in book.spine:
+        soup = BeautifulSoup(chapter.content, 'html.parser')
+        chapter_text = soup.get_text()  # Texte brut pour recherche rapide
+        
+        # Liste des textes déjà surlignés dans ce chapitre (pour éviter doublons)
+        existing_texts = {h.text.strip() for h in chapter.highlights}
+        
+        new_chapter_highlights = []
+        
+        for kh in kobo_highlights:
+            clean_text = kh.text.strip()
+            
+            # Si ce texte n'est pas déjà connu ET qu'il est présent dans ce chapitre
+            if clean_text not in existing_texts and clean_text in chapter_text:
+                new_chapter_highlights.append(kh)
+                chapter.highlights.append(kh)  # Ajout à la liste de données
+                added_count += 1
+        
+        # 3. Injection uniquement des NOUVEAUX highlights dans le HTML existant
+        if new_chapter_highlights:
+            inject_highlights(soup, new_chapter_highlights)
+            chapter.content = str(soup)
+
+    # 4. Sauvegarde globale
+    if added_count > 0:
+        save_book_to_disk(book_id, book)
+
+    return JSONResponse({"status": "synced", "highlights_count": added_count})
 
 if __name__ == "__main__":
     import uvicorn

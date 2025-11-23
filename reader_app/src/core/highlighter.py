@@ -38,6 +38,16 @@ def _get_text_nodes_with_tokens(block_element) -> List[Dict]:
     text_nodes = []
     current_token_idx = 0
     for text_node in block_element.find_all(string=True):
+        # Ignorer les text nodes qui sont déjà dans un span de highlight
+        # pour éviter les spans imbriqués
+        parent = text_node.parent
+        if parent and parent.name == 'span':
+            parent_classes = parent.get('class', [])
+            if isinstance(parent_classes, list):
+                parent_classes = ' '.join(parent_classes)
+            if 'highlight' in str(parent_classes) or 'manual-highlight' in str(parent_classes):
+                continue  # Skip ce text node, il est déjà surligné
+        
         text = str(text_node)
         node_tokens = tokenize_text(text)
         node_token_count = len(node_tokens)
