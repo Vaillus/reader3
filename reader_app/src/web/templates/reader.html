@@ -536,6 +536,14 @@
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
 
+        function isUserAtBottom() {
+            // Check if user is near the bottom (within 50px threshold)
+            const threshold = 50;
+            const position = chatMessages.scrollTop + chatMessages.clientHeight;
+            const height = chatMessages.scrollHeight;
+            return height - position <= threshold;
+        }
+
         function clearChatInput() {
             if (chatInput) chatInput.value = '';
             removeQuote();
@@ -584,7 +592,7 @@
             });
         }
 
-        function submitChatForm(event) {
+        async function submitChatForm(event) {
             event.preventDefault();
             const form = event.target;
             const message = chatInput.value.trim();
@@ -609,62 +617,86 @@
             sendBtn.disabled = true;
             sendBtn.textContent = 'Envoi...';
 
-            // Use fetch to send JSON
             // Encode parameters to handle special characters in book_id
             const bookId = encodeURIComponent('{{ book_id }}');
             const chapterIndex = encodeURIComponent('{{ chapter_index }}');
             
-            fetch(`/chat/send?book_id=${bookId}&chapter_index=${chapterIndex}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(body)
-            })
-            .then(response => {
-                if (!response.ok) {
-                    return response.text().then(text => {
-                        throw new Error(`Server error: ${response.status} - ${text}`);
-                    });
-                }
-                return response.text();
-            })
-            .then(html => {
-                console.log('Received HTML response:', html.substring(0, 200));
-                
-                // Create a temporary container to parse the HTML
-                const temp = document.createElement('div');
-                temp.innerHTML = html;
-                
-                // Append each message
-                const messages = temp.querySelectorAll('.chat-message');
-                console.log('Found messages:', messages.length);
-                
-                if (messages.length === 0) {
-                    console.error('No messages found in response HTML');
-                    alert('Erreur: Aucun message dans la réponse du serveur');
-                    return;
-                }
-                
-                messages.forEach(msg => {
-                    chatMessages.appendChild(msg.cloneNode(true));
+            // Create user message element
+            const escapedUserMessage = message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            const userMessageDiv = document.createElement('div');
+            userMessageDiv.className = 'chat-message user-message';
+            userMessageDiv.innerHTML = `<div class="message-content">${escapedUserMessage}</div>`;
+            chatMessages.appendChild(userMessageDiv);
+            
+            // Create assistant message element (will be updated as chunks arrive)
+            const assistantMessageDiv = document.createElement('div');
+            assistantMessageDiv.className = 'chat-message assistant-message';
+            const assistantContentDiv = document.createElement('div');
+            assistantContentDiv.className = 'message-content';
+            assistantMessageDiv.appendChild(assistantContentDiv);
+            chatMessages.appendChild(assistantMessageDiv);
+            
+            // Scroll to bottom
+            scrollChatToBottom();
+            
+            try {
+                const response = await fetch(`/chat/send?book_id=${bookId}&chapter_index=${chapterIndex}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(body)
                 });
                 
-                // Handle OOB swaps (like note editor updates)
-                const oobElements = temp.querySelectorAll('[hx-swap-oob]');
-                oobElements.forEach(elem => {
-                    const targetId = elem.id;
-                    const target = document.getElementById(targetId);
-                    if (target) {
-                        target.value = elem.value;
-                        // Trigger save if it's the note editor
-                        if (targetId === 'note-editor') {
-                            lastSavedContent = elem.value;
-                            saveStatus.textContent = "Updated by AI";
-                            setTimeout(() => { saveStatus.textContent = "Synced"; }, 2000);
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`Server error: ${response.status} - ${errorText}`);
+                }
+                
+                // Read the stream
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let assistantText = '';
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    buffer += decoder.decode(value, { stream: true });
+                    
+                    // Process complete SSE messages (lines ending with \n\n)
+                    const lines = buffer.split('\n\n');
+                    buffer = lines.pop() || ''; // Keep incomplete line in buffer
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = JSON.parse(line.slice(6));
+                            
+                            if (data.type === 'chunk') {
+                                // Check if user is at bottom BEFORE updating content
+                                const shouldScroll = isUserAtBottom();
+                                
+                                // Append chunk to assistant message
+                                assistantText += data.content;
+                                // Convert newlines to <br> for display
+                                const formattedText = assistantText.replace(/\n/g, '<br>');
+                                assistantContentDiv.innerHTML = formattedText;
+                                
+                                // Only scroll if user was already at bottom
+                                if (shouldScroll) {
+                                    scrollChatToBottom();
+                                }
+                            } else if (data.type === 'error') {
+                                assistantContentDiv.innerHTML = `<span style="color: red;">${data.content}</span>`;
+                                scrollChatToBottom();
+                                throw new Error(data.content);
+                            } else if (data.type === 'assistant_end') {
+                                // Streaming complete
+                            }
                         }
                     }
-                });
+                }
                 
                 // Update conversation history
                 updateConversationHistory();
@@ -681,14 +713,18 @@
                 // Re-enable send button
                 sendBtn.disabled = false;
                 sendBtn.textContent = originalBtnText;
-            })
-            .catch(error => {
+                
+            } catch (error) {
                 console.error('Chat error:', error);
-                alert('Erreur lors de l\'envoi du message: ' + error.message);
+                if (assistantContentDiv) {
+                    assistantContentDiv.innerHTML = `<span style="color: red;">Erreur: ${error.message}</span>`;
+                } else {
+                    alert('Erreur lors de l\'envoi du message: ' + error.message);
+                }
                 // Re-enable send button on error
                 sendBtn.disabled = false;
                 sendBtn.textContent = originalBtnText;
-            });
+            }
 
             return false;
         }

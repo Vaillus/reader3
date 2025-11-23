@@ -61,14 +61,14 @@ On peut demander au LLM d'ajouter/modifier facilement la note de chapitre en fon
 
 - [x] le higlight devrait être une option comme le quoting.
 
-streaming of output in chat.
+- [ ] streaming of output in chat.
 
-improve chat interface.
+- [ ] improve chat interface.
 
-access to chat history
+- [ ] access to chat history
 
-new conversation button
+- [ ] new conversation button
 
-is the context of old messages added to history as well ?
+- [ ] is the context of old messages added to history as well ?
 
-utiliser langgraph.
+- [ ] utiliser langgraph.

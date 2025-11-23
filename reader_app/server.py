@@ -7,7 +7,7 @@ from functools import lru_cache
 from typing import Optional, List, Dict
 
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -184,31 +184,23 @@ class ChatMessage(BaseModel):
     current_notes: Optional[str] = None
     snippets: List[str] = [] # List of text snippets to include in context
 
-@app.post("/chat/send")
-async def send_chat_message(request: Request, chat_data: ChatMessage):
-    """Send a chat message and get LLM response."""
-    if not chat_service:
-        raise HTTPException(status_code=503, detail="Chat service not available. Please set GOOGLE_API_KEY.")
+async def generate_chat_stream(chat_data: ChatMessage, book_id: str, chapter_index: int):
+    """Generator function for streaming chat responses."""
+    # Escape HTML to prevent XSS
+    escaped_user_message = html.escape(chat_data.message)
     
-    # Get book_id and chapter_index from query params
-    book_id = request.query_params.get("book_id")
-    chapter_index = request.query_params.get("chapter_index")
-    
-    if not book_id or chapter_index is None:
-        raise HTTPException(status_code=400, detail="book_id and chapter_index are required")
-    
-    try:
-        chapter_index = int(chapter_index)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="chapter_index must be an integer")
+    # Send user message first
+    yield f"data: {json.dumps({'type': 'user_message', 'content': escaped_user_message})}\n\n"
     
     # Load book and chapter
     book = load_book_cached(book_id)
     if not book:
-        raise HTTPException(status_code=404, detail="Book not found")
+        yield f"data: {json.dumps({'type': 'error', 'content': 'Book not found'})}\n\n"
+        return
     
     if chapter_index < 0 or chapter_index >= len(book.spine):
-        raise HTTPException(status_code=404, detail="Chapter not found")
+        yield f"data: {json.dumps({'type': 'error', 'content': 'Chapter not found'})}\n\n"
+        return
     
     current_chapter = book.spine[chapter_index]
     
@@ -224,9 +216,12 @@ async def send_chat_message(request: Request, chat_data: ChatMessage):
     print(f"[Chat] Notes length: {len(current_notes)}")
     print(f"[Chat] Conversation history length: {len(chat_data.conversation_history)}")
     
-    # Get LLM response
+    # Signal start of assistant message
+    yield f"data: {json.dumps({'type': 'assistant_start'})}\n\n"
+    
+    # Stream LLM response
     try:
-        response_text = chat_service.send_message(
+        for chunk in chat_service.send_message_stream(
             user_message=chat_data.message,
             chapter_title=current_chapter.title,
             chapter_text=current_chapter.text,
@@ -237,37 +232,48 @@ async def send_chat_message(request: Request, chat_data: ChatMessage):
             include_chapter=chat_data.include_chapter,
             include_notes=chat_data.include_notes,
             snippets=chat_data.snippets
-        )
-        print(f"[Chat] LLM response received: {response_text[:100]}...")
+        ):
+            # Escape HTML and send chunk
+            escaped_chunk = html.escape(chunk)
+            yield f"data: {json.dumps({'type': 'chunk', 'content': escaped_chunk})}\n\n"
+        
+        # Signal end of assistant message
+        yield f"data: {json.dumps({'type': 'assistant_end'})}\n\n"
+        
     except Exception as e:
         print(f"[Chat] Error calling LLM: {e}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Error calling LLM: {str(e)}")
+        error_msg = html.escape(f"Erreur lors de la communication avec le LLM: {str(e)}")
+        yield f"data: {json.dumps({'type': 'error', 'content': error_msg})}\n\n"
+
+@app.post("/chat/send")
+async def send_chat_message(request: Request, chat_data: ChatMessage):
+    """Send a chat message and stream LLM response."""
+    if not chat_service:
+        raise HTTPException(status_code=503, detail="Chat service not available. Please set GOOGLE_API_KEY.")
     
-    # Return HTML fragment for HTMX
-    html_parts = []
+    # Get book_id and chapter_index from query params
+    book_id = request.query_params.get("book_id")
+    chapter_index = request.query_params.get("chapter_index")
     
-    # Escape HTML to prevent XSS
-    escaped_user_message = html.escape(chat_data.message)
-    escaped_response = html.escape(response_text)
+    if not book_id or chapter_index is None:
+        raise HTTPException(status_code=400, detail="book_id and chapter_index are required")
     
-    # Add user message
-    html_parts.append(f'''
-    <div class="chat-message user-message">
-        <div class="message-content">{escaped_user_message}</div>
-    </div>
-    ''')
+    try:
+        chapter_index = int(chapter_index)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="chapter_index must be an integer")
     
-    # Add assistant response (convert newlines to <br> for better display)
-    escaped_response_formatted = escaped_response.replace('\n', '<br>')
-    html_parts.append(f'''
-    <div class="chat-message assistant-message">
-        <div class="message-content">{escaped_response_formatted}</div>
-    </div>
-    ''')
-    
-    return HTMLResponse(content="".join(html_parts))
+    return StreamingResponse(
+        generate_chat_stream(chat_data, book_id, chapter_index),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable buffering for nginx
+        }
+    )
 
 # Highlights API endpoints
 class HighlightPayload(BaseModel):
