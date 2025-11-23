@@ -9,10 +9,13 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from bs4 import BeautifulSoup
 
 from src.core.models import Book, ChapterContent, TOCEntry, Highlight, BookMetadata
 from src.core.parser import parse_epub
+from src.core.highlighter import inject_highlights
 from src.integrations.kobo_service import KoboService
+from src.integrations.kobo import fetch_highlights
 
 app = FastAPI()
 
@@ -30,6 +33,64 @@ def load_book_cached(folder_name: str) -> Optional[Book]:
     try:
         with open(file_path, "rb") as f: return pickle.load(f)
     except Exception: return None
+
+def _strip_highlights(html_content: str) -> str:
+    """Removes highlight spans but keeps their text content."""
+    soup = BeautifulSoup(html_content, 'html.parser')
+    for span in soup.find_all('span', class_='highlight'):
+        span.unwrap()
+    return str(soup)
+
+@app.post("/api/books/{book_id}/sync-highlights")
+async def sync_highlights(book_id: str):
+    # 1. Load book
+    book = load_book_cached(book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    
+    # 2. Fetch new highlights
+    try:
+        new_highlights = fetch_highlights(book.metadata.title)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching highlights: {str(e)}")
+    
+    # 3. Update each chapter
+    total_injected = 0
+    for chapter in book.spine:
+        # Strip old highlights
+        clean_html = _strip_highlights(chapter.content)
+        
+        # Inject new highlights
+        soup = BeautifulSoup(clean_html, 'html.parser')
+        inject_highlights(soup, new_highlights)
+        
+        # Identify which highlights ended up in this chapter
+        # Note: simple heuristic check if highlight text is in content
+        chapter_highlights = []
+        soup_str = str(soup)
+        for hl in new_highlights:
+            # Check if a significant part of the highlight exists in the chapter
+            # We use a small snippet to check presence because full text match might be tricky with HTML
+            snippet = hl.text[:50] if len(hl.text) > 50 else hl.text
+            if snippet in soup_str:
+                chapter_highlights.append(hl)
+        
+        chapter.highlights = chapter_highlights
+        total_injected += len(chapter_highlights)
+        
+        # Update content
+        chapter.content = str(soup)
+        
+    # 4. Save book
+    # We need to invalidate cache too
+    load_book_cached.cache_clear()
+    
+    # Save using pickle
+    book_dir = DATA_DIR / book_id
+    with open(book_dir / "book.pkl", "wb") as f:
+        pickle.dump(book, f)
+        
+    return {"status": "success", "highlights_count": total_injected}
 
 @app.get("/", response_class=HTMLResponse)
 async def library_view(request: Request):

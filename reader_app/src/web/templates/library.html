@@ -34,12 +34,43 @@
                 <div class="book-title">{{ book.title }}</div>
                 <div class="book-meta">
                     {{ book.author }}<br>
-                    {{ book.chapters }} sections
+                    {{ book.chapters }} sections • {{ book.highlights }} highlights
                 </div>
-                <a href="/read/{{ book.id }}/0" class="btn">Read Book</a>
+                <div style="display: flex; gap: 10px;">
+                    <a href="/read/{{ book.id }}/0" class="btn">Read Book</a>
+                    <button onclick="syncHighlights('{{ book.id }}')" class="btn" style="background: #e67e22; border: none; cursor: pointer;">Sync</button>
+                </div>
             </div>
             {% endfor %}
         </div>
     </div>
+
+    <script>
+        async function syncHighlights(bookId) {
+            if (!confirm('Reload highlights from Kobo Desktop database?')) return;
+            
+            const btn = event.target;
+            const originalText = btn.innerText;
+            btn.innerText = 'Syncing...';
+            btn.disabled = true;
+            
+            try {
+                const response = await fetch(`/api/books/${bookId}/sync-highlights`, { method: 'POST' });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    alert(`Synced! found ${data.highlights_count} highlights.`);
+                    location.reload();
+                } else {
+                    alert('Error: ' + data.detail);
+                }
+            } catch (e) {
+                alert('Error syncing highlights: ' + e);
+            } finally {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }
+        }
+    </script>
 </body>
 </html>
