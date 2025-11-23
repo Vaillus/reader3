@@ -46,3 +46,13 @@ Je veux qu'on puisse ouvrir des discussions avec un LLM à propos du chapitre qu
 Il  y a un historique de discussions par chapitre, accessible facilement.
 On peut facilement ajouter le chapitre entier, des bouts de chapitre spécifiques et la note du chapitre en contexte dans la discussion.
 On peut demander au LLM d'ajouter/modifier facilement la note de chapitre en fonction de notre discussion.
+
+# To do
+- possibilité de highlighter dans le chapitre courant.
+- faire en sorte que les highlights ne s'enlèvent pas lors de la synchronisation.
+- streaming of output in chat.
+- improve chat interface.
+- access to chat history
+- new conversation button
+- is the context of old messages added to history as well ?
+- utiliser langgraph.

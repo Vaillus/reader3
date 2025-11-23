@@ -167,6 +167,10 @@ class ChatMessage(BaseModel):
     message: str
     conversation_history: List[Dict[str, str]] = []
     quoted_text: Optional[str] = None
+    include_chapter: bool = True
+    include_notes: bool = True
+    current_notes: Optional[str] = None
+    snippets: List[str] = [] # List of text snippets to include in context
 
 @app.post("/chat/send")
 async def send_chat_message(request: Request, chat_data: ChatMessage):
@@ -195,22 +199,32 @@ async def send_chat_message(request: Request, chat_data: ChatMessage):
         raise HTTPException(status_code=404, detail="Chapter not found")
     
     current_chapter = book.spine[chapter_index]
-    current_notes = get_chapter_note_content(book.metadata.title, current_chapter.title)
+    
+    # Determine notes content: use provided content from frontend if available, else load from disk
+    if chat_data.current_notes is not None:
+        current_notes = chat_data.current_notes
+    else:
+        current_notes = get_chapter_note_content(book.metadata.title, current_chapter.title)
     
     print(f"[Chat] Received message: {chat_data.message[:100]}...")
     print(f"[Chat] Chapter: {current_chapter.title}")
+    print(f"[Chat] Context - Chapter: {chat_data.include_chapter}, Notes: {chat_data.include_notes}")
+    print(f"[Chat] Notes length: {len(current_notes)}")
     print(f"[Chat] Conversation history length: {len(chat_data.conversation_history)}")
     
     # Get LLM response
     try:
-        response_text, updated_notes = chat_service.send_message(
+        response_text = chat_service.send_message(
             user_message=chat_data.message,
             chapter_title=current_chapter.title,
             chapter_text=current_chapter.text,
             current_notes=current_notes,
             conversation_history=chat_data.conversation_history,
             book_title=book.metadata.title,
-            quoted_text=chat_data.quoted_text
+            quoted_text=chat_data.quoted_text,
+            include_chapter=chat_data.include_chapter,
+            include_notes=chat_data.include_notes,
+            snippets=chat_data.snippets
         )
         print(f"[Chat] LLM response received: {response_text[:100]}...")
     except Exception as e:
@@ -219,13 +233,7 @@ async def send_chat_message(request: Request, chat_data: ChatMessage):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error calling LLM: {str(e)}")
     
-    # If notes were updated, save them
-    if updated_notes is not None:
-        print(f"[Chat] Notes updated by LLM")
-        save_chapter_note_content(book.metadata.title, current_chapter.title, updated_notes)
-    
     # Return HTML fragment for HTMX
-    # The response includes both the chat message and optionally the updated note editor
     html_parts = []
     
     # Escape HTML to prevent XSS
@@ -245,14 +253,6 @@ async def send_chat_message(request: Request, chat_data: ChatMessage):
     <div class="chat-message assistant-message">
         <div class="message-content">{escaped_response_formatted}</div>
     </div>
-    ''')
-    
-    # If notes were updated, add OOB swap for the note editor
-    if updated_notes is not None:
-        # Escape notes content for textarea (but preserve newlines)
-        escaped_notes = html.escape(updated_notes)
-        html_parts.append(f'''
-    <textarea id="note-editor" class="notes-editor" placeholder="Write your notes here... they will sync to Obsidian." hx-swap-oob="true">{escaped_notes}</textarea>
     ''')
     
     return HTMLResponse(content="".join(html_parts))

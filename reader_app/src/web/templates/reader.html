@@ -145,6 +145,87 @@
             cursor: not-allowed;
         }
         
+        /* Context Chips */
+        .context-chips {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+
+        .context-chip {
+            font-size: 0.85em;
+            padding: 4px 10px;
+            border-radius: 15px;
+            border: 1px solid #dee2e6;
+            background: #f8f9fa;
+            color: #6c757d;
+            cursor: pointer;
+            transition: all 0.2s;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .context-chip.active {
+            background: #e7f1ff;
+            color: #0d6efd;
+            border-color: #0d6efd;
+        }
+
+        .context-chip:hover {
+            background: #e9ecef;
+        }
+
+        .context-chip.snippet-chip {
+            background: #fff3cd;
+            color: #856404;
+            border-color: #ffc107;
+        }
+
+        .context-chip.snippet-chip .remove-snippet {
+            margin-left: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            opacity: 0.7;
+        }
+
+        .context-chip.snippet-chip .remove-snippet:hover {
+            opacity: 1;
+        }
+
+        /* Floating selection menu */
+        .selection-menu {
+            position: fixed;
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            padding: 4px;
+            z-index: 10000;
+            display: none;
+            font-family: -apple-system, sans-serif;
+            pointer-events: auto;
+        }
+
+        .selection-menu button {
+            padding: 6px 12px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 0.9em;
+            color: #495057;
+            display: block;
+            width: 100%;
+            text-align: left;
+        }
+
+        .selection-menu button:hover {
+            background: #f8f9fa;
+        }
+
         .quote-indicator {
             padding: 8px 12px;
             background: #fff3cd;
@@ -344,10 +425,17 @@
                     <span id="quote-text"></span>
                     <span class="remove-quote" onclick="removeQuote()">×</span>
                 </div>
-                <div style="display: flex; gap: 5px; margin-bottom: 8px;">
-                    <button class="add-chapter-btn" onclick="addChapterToContext()">+ Chapitre</button>
-                    <button class="add-notes-btn" onclick="addNotesToContext()">+ Notes</button>
+                
+                <div class="context-chips" id="context-chips">
+                    <div class="context-chip active" id="chip-chapter" onclick="toggleContext('chapter')">
+                        <span>📄 Chapitre</span>
+                    </div>
+                    <div class="context-chip" id="chip-notes" onclick="toggleContext('notes')">
+                        <span>📝 Mes Notes</span>
+                    </div>
+                    <!-- Snippet chips will be added here dynamically -->
                 </div>
+
                 <form class="chat-input-form" 
                       onsubmit="return submitChatForm(event)">
                     <input type="text" 
@@ -409,6 +497,9 @@
         // We use selectedText variable directly instead
         let conversationHistory = [];
         let selectedText = null;
+        let selectedSnippets = []; // Array of {id, text, preview}
+        let snippetCounter = 0;
+        let currentSelection = null;
 
         // Load chat preference
         if (localStorage.getItem('chatPanelOpen') === 'true') {
@@ -448,27 +539,19 @@
             if (quoteIndicator) quoteIndicator.style.display = 'block';
         }
 
-        function addChapterToContext() {
-            const chapterText = document.querySelector('.book-content').innerText;
-            if (chatInput.value.trim()) {
-                chatInput.value = `[Contexte du chapitre]:\n\n${chapterText}\n\n---\n\n${chatInput.value}`;
-            } else {
-                chatInput.value = `[Contexte du chapitre]:\n\n${chapterText}`;
-            }
-            chatInput.focus();
-        }
+        // Gestion des Chips
+        let contextState = {
+            chapter: true,
+            notes: false
+        };
 
-        function addNotesToContext() {
-            const notesContent = noteEditor.value;
-            if (notesContent.trim()) {
-                if (chatInput.value.trim()) {
-                    chatInput.value = `[Mes notes]:\n\n${notesContent}\n\n---\n\n${chatInput.value}`;
-                } else {
-                    chatInput.value = `[Mes notes]:\n\n${notesContent}`;
-                }
-                chatInput.focus();
+        function toggleContext(type) {
+            contextState[type] = !contextState[type];
+            const chip = document.getElementById(`chip-${type}`);
+            if (contextState[type]) {
+                chip.classList.add('active');
             } else {
-                alert('Vous n\'avez pas encore de notes pour ce chapitre.');
+                chip.classList.remove('active');
             }
         }
 
@@ -496,7 +579,13 @@
             const body = {
                 message: message,
                 conversation_history: conversationHistory,
-                quoted_text: selectedText || null
+                quoted_text: selectedText || null,
+                include_chapter: contextState.chapter,
+                include_notes: contextState.notes,
+                // Send current editor content to ensure fresh notes
+                current_notes: noteEditor.value,
+                // Send snippets
+                snippets: selectedSnippets.map(s => s.text)
             };
 
             // Disable send button while processing
@@ -565,8 +654,14 @@
                 // Update conversation history
                 updateConversationHistory();
                 
-                // Clear input and scroll
+                // Clear input, snippets, and scroll
                 clearChatInput();
+                // Clear snippets after sending
+                selectedSnippets.forEach(s => {
+                    const chip = document.getElementById(s.id);
+                    if (chip) chip.remove();
+                });
+                selectedSnippets = [];
                 
                 // Re-enable send button
                 sendBtn.disabled = false;
@@ -583,25 +678,178 @@
             return false;
         }
 
-        // Handle text selection for citation
-        document.addEventListener('mouseup', () => {
-            const selection = window.getSelection();
-            const selectedTextContent = selection.toString().trim();
+        // Handle text selection for snippets
+        document.addEventListener('mouseup', (e) => {
+            // Don't interfere with clicks on the selection menu itself
+            const menu = document.getElementById('selection-menu');
+            if (menu && menu.contains(e.target)) {
+                return;
+            }
             
-            if (selectedTextContent.length > 0 && selectedTextContent.length < 500) {
-                // Show a small "Quote" button near the selection
-                // For simplicity, we'll just store it and let user click a button
-                // Or we can add a floating button
-                selectedText = selectedTextContent;
+            // Small delay to ensure selection is complete
+            setTimeout(() => {
+                const selection = window.getSelection();
+                const selectedTextContent = selection.toString().trim();
+                
+                // Hide menu if clicking outside and no selection
+                if (selectedTextContent.length === 0) {
+                    hideSelectionMenu();
+                    return;
+                }
+                
+                // Only show menu if selection is in book content (not in chat or notes)
+                const bookContent = document.querySelector('.book-content');
+                let isInBookContent = false;
+                
+                if (bookContent && selection.rangeCount > 0) {
+                    const range = selection.getRangeAt(0);
+                    // Check if the range intersects with book content
+                    isInBookContent = bookContent.contains(range.commonAncestorContainer) || 
+                                     bookContent.contains(range.startContainer) ||
+                                     bookContent.contains(range.endContainer);
+                }
+                
+                if (isInBookContent && selectedTextContent.length > 0) {
+                    // Store selection info
+                    currentSelection = {
+                        text: selectedTextContent,
+                        range: selection.rangeCount > 0 ? selection.getRangeAt(0) : null
+                    };
+                    
+                    // Show floating menu near selection
+                    if (currentSelection.range) {
+                        const rect = currentSelection.range.getBoundingClientRect();
+                        showSelectionMenu(rect);
+                    }
+                } else {
+                    hideSelectionMenu();
+                }
+                
+                // Keep old behavior for quoted_text (for non-book content)
+                if (selectedTextContent.length < 500) {
+                    selectedText = selectedTextContent;
+                }
+            }, 10);
+        });
+        
+        // Hide menu when clicking elsewhere
+        document.addEventListener('click', (e) => {
+            const menu = document.getElementById('selection-menu');
+            if (menu && !menu.contains(e.target) && e.target.id !== 'selection-menu') {
+                hideSelectionMenu();
             }
         });
 
-        // Add keyboard shortcut to quote selected text (Ctrl+Q or Cmd+Q)
+        function showSelectionMenu(rect) {
+            // Create menu if it doesn't exist
+            let menu = document.getElementById('selection-menu');
+            if (!menu) {
+                menu = document.createElement('div');
+                menu.id = 'selection-menu';
+                menu.className = 'selection-menu';
+                menu.innerHTML = '<button onclick="addSnippetFromSelection()">📎 Ajouter au contexte</button>';
+                document.body.appendChild(menu);
+            }
+            
+            menu.style.display = 'block';
+            menu.style.left = (rect.left + window.scrollX) + 'px';
+            menu.style.top = (rect.bottom + window.scrollY + 5) + 'px';
+        }
+
+        function hideSelectionMenu() {
+            const menu = document.getElementById('selection-menu');
+            if (menu) {
+                menu.style.display = 'none';
+            }
+            currentSelection = null;
+        }
+
+        function addSnippetFromSelection() {
+            if (!currentSelection || !currentSelection.text) return;
+            
+            const snippetId = `snippet-${snippetCounter++}`;
+            const snippetText = currentSelection.text;
+            const preview = snippetText.length > 50 
+                ? snippetText.substring(0, 50) + '...' 
+                : snippetText;
+            
+            selectedSnippets.push({
+                id: snippetId,
+                text: snippetText,
+                preview: preview
+            });
+            
+            // Add chip to UI
+            addSnippetChip(snippetId, preview);
+            
+            // Hide menu and clear selection
+            hideSelectionMenu();
+            window.getSelection().removeAllRanges();
+        }
+
+        function addSnippetChip(snippetId, preview) {
+            const chipsContainer = document.getElementById('context-chips');
+            const chip = document.createElement('div');
+            chip.className = 'context-chip snippet-chip';
+            chip.id = snippetId;
+            chip.innerHTML = `
+                <span>📎 ${preview}</span>
+                <span class="remove-snippet" onclick="removeSnippet('${snippetId}')">×</span>
+            `;
+            chipsContainer.appendChild(chip);
+        }
+
+        function removeSnippet(snippetId) {
+            // Remove from array
+            selectedSnippets = selectedSnippets.filter(s => s.id !== snippetId);
+            
+            // Remove chip from UI
+            const chip = document.getElementById(snippetId);
+            if (chip) {
+                chip.remove();
+            }
+        }
+
+        // Add keyboard shortcut to add snippet to context (Ctrl+Q or Cmd+Q)
         document.addEventListener('keydown', (e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'q' && selectedText) {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'q') {
                 e.preventDefault();
-                addQuoteToChat(selectedText);
-                chatInput.focus();
+                const selection = window.getSelection();
+                const selectedTextContent = selection.toString().trim();
+                
+                if (selectedTextContent.length > 0) {
+                    // Check if selection is in book content
+                    const bookContent = document.querySelector('.book-content');
+                    if (bookContent && bookContent.contains(selection.anchorNode)) {
+                        // Add as snippet
+                        const snippetId = `snippet-${snippetCounter++}`;
+                        const snippetText = selectedTextContent;
+                        const preview = snippetText.length > 50 
+                            ? snippetText.substring(0, 50) + '...' 
+                            : snippetText;
+                        
+                        selectedSnippets.push({
+                            id: snippetId,
+                            text: snippetText,
+                            preview: preview
+                        });
+                        
+                        // Add chip to UI
+                        addSnippetChip(snippetId, preview);
+                        
+                        // Clear selection
+                        selection.removeAllRanges();
+                        
+                        // Focus chat input
+                        if (chatInput) chatInput.focus();
+                    } else {
+                        // Fallback: use old quote behavior for non-book content
+                        if (selectedTextContent.length < 500) {
+                            addQuoteToChat(selectedTextContent);
+                            if (chatInput) chatInput.focus();
+                        }
+                    }
+                }
             }
         });
 

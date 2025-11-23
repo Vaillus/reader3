@@ -1,7 +1,7 @@
 import os
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 import google.generativeai as genai
 from dotenv import load_dotenv
 
@@ -28,56 +28,42 @@ class ChatService:
         chapter_title: str,
         chapter_text: str,
         current_notes: str,
-        book_title: Optional[str] = None
+        book_title: Optional[str] = None,
+        include_chapter: bool = True,
+        include_notes: bool = True
     ) -> str:
         """Build the system prompt with chapter context and current notes."""
-        # Truncate chapter text if too long (keep first 8000 chars to leave room for notes and conversation)
-        truncated_chapter = chapter_text[:8000]
-        if len(chapter_text) > 8000:
-            truncated_chapter += "\n\n[... chapter continues ...]"
         
-        prompt = f"""Tu es un assistant de lecture intelligent. L'utilisateur lit le chapitre '{chapter_title}'"""
+        prompt = f"""Tu es un assistant de lecture intelligent."""
         
         if book_title:
-            prompt += f" du livre '{book_title}'"
-        
-        prompt += """.
+            prompt += f" L'utilisateur lit le livre '{book_title}'"
+            
+        if include_chapter:
+            # Truncate chapter text if too long (keep first 8000 chars to leave room for notes and conversation)
+            truncated_chapter = chapter_text[:8000]
+            if len(chapter_text) > 8000:
+                truncated_chapter += "\n\n[... chapter continues ...]"
+            
+            prompt += f""".
 
+Tu as accès au contenu du chapitre '{chapter_title}' que l'utilisateur est en train de lire.
 Voici le contenu du chapitre :
 
 ---
 {truncated_chapter}
----
+---"""
+        
+        if include_notes:
+            prompt += f""".
 
-Voici les notes que l'utilisateur a prises pour l'instant :
+Voici les notes que l'utilisateur a prises pour l'instant sur ce chapitre :
 
 ---
 {current_notes if current_notes.strip() else "(Aucune note pour l'instant)"}
----
+---"""
 
-Tu peux :
-- Répondre aux questions sur le chapitre
-- Analyser le contenu
-- Aider à comprendre les concepts
-- Suggérer des améliorations aux notes
-
-IMPORTANT : Si l'utilisateur te demande d'ajouter ou de modifier ses notes, tu dois répondre avec un format spécial :
-- Pour modifier les notes, termine ta réponse par une ligne commençant par "NOTE_UPDATE:" suivie du nouveau contenu complet des notes (en Markdown).
-- Sinon, réponds normalement.
-
-Exemple de réponse avec mise à jour de notes :
-"Voici un résumé du chapitre...
-
-NOTE_UPDATE:
-# Notes du chapitre
-
-## Points clés
-- Point 1
-- Point 2
-
-## Réflexions
-..."
-"""
+        prompt += "."
         return prompt
     
     def send_message(
@@ -88,8 +74,11 @@ NOTE_UPDATE:
         current_notes: str,
         conversation_history: List[Dict[str, str]],
         book_title: Optional[str] = None,
-        quoted_text: Optional[str] = None
-    ) -> Tuple[str, Optional[str]]:
+        quoted_text: Optional[str] = None,
+        include_chapter: bool = True,
+        include_notes: bool = True,
+        snippets: List[str] = None
+    ) -> str:
         """
         Send a message to the LLM and get response.
         
@@ -101,22 +90,37 @@ NOTE_UPDATE:
             conversation_history: List of previous messages in format [{"role": "user/assistant", "content": "..."}]
             book_title: Optional book title
             quoted_text: Optional text quoted by the user
+            include_chapter: Whether to include chapter text in context
+            include_notes: Whether to include notes in context
+            snippets: Optional list of text snippets to include in context
         
         Returns:
-            Tuple of (response_text, updated_notes) where updated_notes is None if no update requested
+            Response text from the LLM
         """
         # Build the system prompt
         system_prompt = self.build_system_prompt(
             chapter_title=chapter_title,
             chapter_text=chapter_text,
             current_notes=current_notes,
-            book_title=book_title
+            book_title=book_title,
+            include_chapter=include_chapter,
+            include_notes=include_notes
         )
         
-        # Prepare the message with quoted text if provided
+        # Prepare the message with quoted text and snippets if provided
         full_user_message = user_message
+        
+        # Add snippets first (if any)
+        if snippets and len(snippets) > 0:
+            snippets_text = "\n\n".join([f'[Extrait]: "{snippet}"' for snippet in snippets])
+            full_user_message = f"{snippets_text}\n\n---\n\n{full_user_message}"
+        
+        # Add quoted text (if any)
         if quoted_text:
-            full_user_message = f'[Citation du texte]: "{quoted_text}"\n\n{user_message}'
+            if snippets and len(snippets) > 0:
+                full_user_message = f'[Citation du texte]: "{quoted_text}"\n\n{full_user_message}'
+            else:
+                full_user_message = f'[Citation du texte]: "{quoted_text}"\n\n{user_message}'
         
         # Build conversation history for Gemini
         # Gemini uses a list of dicts with "role" and "parts" keys
@@ -137,18 +141,9 @@ NOTE_UPDATE:
             
             # Send current user message
             response = chat.send_message(full_user_message)
-            response_text = response.text
-            
-            # Check if response contains NOTE_UPDATE marker
-            note_update = None
-            if "NOTE_UPDATE:" in response_text:
-                parts = response_text.split("NOTE_UPDATE:", 1)
-                response_text = parts[0].strip()
-                note_update = parts[1].strip()
-            
-            return response_text, note_update
+            return response.text
             
         except Exception as e:
             error_msg = f"Erreur lors de la communication avec le LLM: {str(e)}"
-            return error_msg, None
+            return error_msg
 
