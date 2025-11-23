@@ -25,6 +25,55 @@
         #main { flex-grow: 1; overflow-y: auto; position: relative; scroll-behavior: smooth; }
         .content-container { max-width: 700px; margin: 0 auto; padding: 60px 40px; line-height: 1.8; font-size: 1.15em; color: #212529; }
 
+        /* Note Panel */
+        #notes-panel {
+            width: 0;
+            background: #fff;
+            border-left: 1px solid #dee2e6;
+            transition: width 0.3s ease;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        #notes-panel.open { width: 400px; }
+        
+        .notes-header {
+            padding: 15px 20px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+            font-family: -apple-system, sans-serif;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .notes-editor {
+            flex-grow: 1;
+            padding: 20px;
+            border: none;
+            resize: none;
+            font-family: 'Courier New', monospace;
+            font-size: 0.95em;
+            line-height: 1.5;
+            outline: none;
+        }
+        
+        .toggle-notes-btn {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 100;
+            background: #fff;
+            border: 1px solid #dee2e6;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: -apple-system, sans-serif;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        .toggle-notes-btn:hover { background: #f8f9fa; }
+
         /* Content Styling (Basic normalization for the book HTML) */
         .book-content img { max-width: 100%; height: auto; display: block; margin: 20px auto; }
         .book-content h1, .book-content h2, .book-content h3 { font-family: -apple-system, sans-serif; margin-top: 1.5em; color: #333; }
@@ -107,6 +156,8 @@
 
     <!-- MAIN CONTENT -->
     <div id="main">
+        <button class="toggle-notes-btn" onclick="toggleNotes()">📝 Notes</button>
+        
         <div class="content-container">
             <div class="book-content">
                 {{ current_chapter.content | safe }}
@@ -130,6 +181,15 @@
                 {% endif %}
             </div>
         </div>
+    </div>
+
+    <!-- NOTES PANEL -->
+    <div id="notes-panel">
+        <div class="notes-header">
+            <span>Chapter Notes (Markdown)</span>
+            <span id="save-status" style="font-size: 0.8em; color: #999;">Synced</span>
+        </div>
+        <textarea id="note-editor" class="notes-editor" placeholder="Write your notes here... they will sync to Obsidian.">{{ note_content }}</textarea>
     </div>
 
     <script>
@@ -158,6 +218,111 @@
                 window.location.href = url;
             } else {
                 console.log("Could not find index for", filename);
+            }
+        }
+
+        // --- NOTES LOGIC ---
+        const notesPanel = document.getElementById('notes-panel');
+        const noteEditor = document.getElementById('note-editor');
+        const saveStatus = document.getElementById('save-status');
+        let saveTimeout;
+        let syncInterval;
+        let lastSavedContent = noteEditor.value;
+        let isUserTyping = false;
+
+        // Load preference - open if there's existing content or user preference
+        if (localStorage.getItem('notesPanelOpen') === 'true' || noteEditor.value.trim() !== "") {
+            notesPanel.classList.add('open');
+        }
+
+        function toggleNotes() {
+            const wasOpen = notesPanel.classList.contains('open');
+            notesPanel.classList.toggle('open');
+            localStorage.setItem('notesPanelOpen', notesPanel.classList.contains('open'));
+            
+            // Start sync when opening, stop when closing
+            if (!wasOpen && notesPanel.classList.contains('open')) {
+                startSync();
+            } else if (wasOpen) {
+                stopSync();
+            }
+        }
+
+        // Start sync when panel is already open on load
+        if (notesPanel.classList.contains('open')) {
+            startSync();
+        }
+
+        function startSync() {
+            // Check for external changes every 2 seconds
+            syncInterval = setInterval(checkForExternalChanges, 2000);
+        }
+
+        function stopSync() {
+            if (syncInterval) {
+                clearInterval(syncInterval);
+                syncInterval = null;
+            }
+        }
+
+        async function checkForExternalChanges() {
+            // Don't sync if user is currently typing
+            if (isUserTyping) return;
+            
+            try {
+                const response = await fetch('/api/notes/{{ book_id }}/{{ chapter_index }}');
+                if (response.ok) {
+                    const data = await response.json();
+                    const serverContent = data.content;
+                    
+                    // Only update if content changed and user hasn't modified locally
+                    if (serverContent !== noteEditor.value && serverContent !== lastSavedContent) {
+                        // External change detected
+                        noteEditor.value = serverContent;
+                        lastSavedContent = serverContent;
+                        saveStatus.textContent = "Synced from Obsidian";
+                        setTimeout(() => { saveStatus.textContent = "Synced"; }, 2000);
+                    }
+                }
+            } catch (e) {
+                console.error('Sync error:', e);
+            }
+        }
+
+        noteEditor.addEventListener('input', () => {
+            isUserTyping = true;
+            saveStatus.textContent = "Typing...";
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(() => {
+                saveNotes();
+                isUserTyping = false;
+            }, 1000); // Autosave after 1s of inactivity
+        });
+
+        async function saveNotes() {
+            saveStatus.textContent = "Saving...";
+            const content = noteEditor.value;
+            
+            try {
+                const response = await fetch('/api/notes/{{ book_id }}/{{ chapter_index }}', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: content })
+                });
+                
+                if (response.ok) {
+                    lastSavedContent = content;
+                    saveStatus.textContent = "Saved to Obsidian";
+                    saveStatus.style.color = "#999";
+                    setTimeout(() => { saveStatus.textContent = "Synced"; }, 2000);
+                } else {
+                    saveStatus.textContent = "Error saving!";
+                    saveStatus.style.color = "red";
+                }
+            } catch (e) {
+                console.error(e);
+                saveStatus.textContent = "Error saving!";
+                saveStatus.style.color = "red";
             }
         }
     </script>

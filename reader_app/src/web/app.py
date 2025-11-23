@@ -16,8 +16,13 @@ from src.core.parser import parse_epub
 from src.core.highlighter import inject_highlights
 from src.integrations.kobo_service import KoboService
 from src.integrations.kobo import fetch_highlights
+from src.core.obsidian import ensure_main_note_exists, get_chapter_note_content, save_chapter_note_content
+from pydantic import BaseModel
 
 app = FastAPI()
+
+class NoteUpdate(BaseModel):
+    content: str
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 TEMPLATES_DIR = BASE_DIR / "src" / "web" / "templates"
@@ -166,13 +171,52 @@ async def read_chapter(request: Request, book_id: str, chapter_index: int):
     if chapter_index < 0 or chapter_index >= len(book.spine): raise HTTPException(status_code=404, detail="Chapter not found")
     
     current_chapter = book.spine[chapter_index]
+    
+    # --- OBSIDIAN INTEGRATION ---
+    # 1. Ensure main note exists (without chapter links)
+    ensure_main_note_exists(book.metadata.title)
+    
+    # 2. Get existing note content for this chapter (always reload from disk for bi-directional sync)
+    note_content = get_chapter_note_content(book.metadata.title, current_chapter.title)
+    # ----------------------------
+    
     prev_idx = chapter_index - 1 if chapter_index > 0 else None
     next_idx = chapter_index + 1 if chapter_index < len(book.spine) - 1 else None
 
     return templates.TemplateResponse("reader.html", {
         "request": request, "book": book, "current_chapter": current_chapter,
-        "chapter_index": chapter_index, "book_id": book_id, "prev_idx": prev_idx, "next_idx": next_idx
+        "chapter_index": chapter_index, "book_id": book_id, "prev_idx": prev_idx, "next_idx": next_idx,
+        "note_content": note_content
     })
+
+@app.post("/api/notes/{book_id}/{chapter_index}")
+async def save_note(book_id: str, chapter_index: int, note: NoteUpdate):
+    book = load_book_cached(book_id)
+    if not book: raise HTTPException(status_code=404, detail="Book not found")
+    if chapter_index < 0 or chapter_index >= len(book.spine): 
+        raise HTTPException(status_code=404, detail="Chapter not found")
+    
+    chapter = book.spine[chapter_index]
+    try:
+        save_chapter_note_content(book.metadata.title, chapter.title, note.content)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/notes/{book_id}/{chapter_index}")
+async def get_note(book_id: str, chapter_index: int):
+    """Get the latest note content from Obsidian (for bi-directional sync)."""
+    book = load_book_cached(book_id)
+    if not book: raise HTTPException(status_code=404, detail="Book not found")
+    if chapter_index < 0 or chapter_index >= len(book.spine):
+        raise HTTPException(status_code=404, detail="Chapter not found")
+    
+    chapter = book.spine[chapter_index]
+    try:
+        content = get_chapter_note_content(book.metadata.title, chapter.title)
+        return {"content": content}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/read/{book_id}/images/{image_name}")
 async def serve_image(book_id: str, image_name: str):

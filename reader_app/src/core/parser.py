@@ -23,6 +23,9 @@ def parse_epub(epub_path: str, output_dir: str, fetch_kobo_highlights: bool = Tr
     os.makedirs(images_dir, exist_ok=True)
     image_map = _extract_images(book, images_dir)
     toc_structure = _parse_toc_recursive(book.toc) or _get_fallback_toc(book)
+    # Create a map from file href to title for looking up chapter titles
+    toc_map = _create_toc_map(toc_structure)
+    
     spine_chapters = []
     for i, spine_item in enumerate(book.spine):
         item_id, _ = spine_item
@@ -37,8 +40,13 @@ def parse_epub(epub_path: str, output_dir: str, fetch_kobo_highlights: bool = Tr
         chapter_highlights = [hl for hl in highlights if hl.text[:20] in str(soup)]
         body = soup.find('body')
         final_html = "".join([str(x) for x in body.contents]) if body else str(soup)
+        
+        # Find the title from TOC map, fallback to "Section X" if not found
+        item_name = item.get_name()
+        chapter_title = toc_map.get(item_name, f"Section {i+1}")
+        
         chapter = ChapterContent(
-            id=item_id, href=item.get_name(), title=f"Section {i+1}",
+            id=item_id, href=item_name, title=chapter_title,
             content=final_html, text=soup.get_text(separator=' '), order=i,
             highlights=chapter_highlights
         )
@@ -87,6 +95,23 @@ def _clean_html(soup):
 
 def _save_pickle(book: Book, output_dir: str):
     with open(os.path.join(output_dir, 'book.pkl'), 'wb') as f: pickle.dump(book, f)
+
+def _create_toc_map(toc_entries: List[TOCEntry]) -> Dict[str, str]:
+    """Creates a mapping from file_href to title from TOC entries."""
+    toc_map = {}
+    for entry in toc_entries:
+        # Use file_href (without anchor) as key
+        if entry.file_href:
+            toc_map[entry.file_href] = entry.title
+        # Also try with href in case file_href is empty
+        if entry.href and not entry.file_href:
+            file_href = entry.href.split('#')[0]
+            if file_href:
+                toc_map[file_href] = entry.title
+        # Recursively process children
+        if entry.children:
+            toc_map.update(_create_toc_map(entry.children))
+    return toc_map
 
 def _parse_toc_recursive(toc_list, depth=0) -> List[TOCEntry]:
     result = []
