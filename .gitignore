@@ -12,3 +12,8 @@ wheels/
 # Custom
 *_data/
 *.epub
+
+# Environment and sensitive files
+.env
+auth_output.txt
+*.log
