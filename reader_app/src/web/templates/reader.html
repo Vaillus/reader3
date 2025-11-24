@@ -11,6 +11,9 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/rangy/1.3.1/rangy-highlighter.min.js"></script>
     <!-- Markdown rendering library -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- EasyMDE for Markdown editor -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
     <style>
         /* Layout */
         body { margin: 0; padding: 0; display: flex; height: 100vh; overflow: hidden; font-family: "Georgia", serif; background: #fff; }
@@ -429,14 +432,88 @@
         }
         
         .notes-editor {
+            display: none; /* Hidden, EasyMDE will create its own container */
+        }
+
+        /* EasyMDE custom styles */
+        #notes-panel .EasyMDEContainer {
             flex-grow: 1;
-            padding: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #notes-panel .EasyMDEContainer .CodeMirror {
+            flex-grow: 1;
+            height: auto;
             border: none;
-            resize: none;
-            font-family: 'Courier New', monospace;
             font-size: 0.95em;
-            line-height: 1.5;
-            outline: none;
+            line-height: 1.6;
+        }
+
+        #notes-panel .editor-toolbar {
+            border: none;
+            border-bottom: 1px solid #dee2e6;
+            background: #f8f9fa;
+        }
+
+        #notes-panel .editor-toolbar button {
+            color: #495057 !important;
+        }
+
+        #notes-panel .editor-toolbar button:hover {
+            background: #e9ecef !important;
+            border-color: #dee2e6 !important;
+        }
+
+        #notes-panel .editor-toolbar button.active {
+            background: #e9ecef !important;
+        }
+
+        /* Masquer les # des titres Markdown par défaut */
+        #notes-panel .CodeMirror .cm-formatting-header {
+            color: transparent;
+            letter-spacing: -0.5em;
+            transition: color 0.1s, letter-spacing 0.1s;
+        }
+
+        /* Réafficher les # quand le curseur est sur la ligne - essai avec plusieurs sélecteurs */
+        #notes-panel .CodeMirror-activeline .cm-formatting-header,
+        #notes-panel .CodeMirror-activeline span.cm-formatting-header,
+        #notes-panel .CodeMirror .CodeMirror-activeline .cm-formatting-header,
+        #notes-panel .CodeMirror-focused .CodeMirror-activeline .cm-formatting-header {
+            color: #999 !important;
+            letter-spacing: normal !important;
+        }
+
+        /* Styliser les titres en Markdown */
+        #notes-panel .CodeMirror .cm-header-1 {
+            font-size: 1.6em;
+            font-weight: bold;
+        }
+
+        #notes-panel .CodeMirror .cm-header-2 {
+            font-size: 1.4em;
+            font-weight: bold;
+        }
+
+        #notes-panel .CodeMirror .cm-header-3 {
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+
+        #notes-panel .CodeMirror .cm-header-4 {
+            font-size: 1.1em;
+            font-weight: bold;
+        }
+
+        #notes-panel .CodeMirror .cm-header-5 {
+            font-size: 1.05em;
+            font-weight: bold;
+        }
+
+        #notes-panel .CodeMirror .cm-header-6 {
+            font-size: 1em;
+            font-weight: bold;
         }
         
 
@@ -590,9 +667,28 @@
             border-color: #5dade2;
         }
 
-        body.dark-mode .notes-editor {
+        /* Dark mode for EasyMDE */
+        body.dark-mode #notes-panel .CodeMirror {
             background: #2d2d2d;
             color: #e0e0e0;
+        }
+
+        body.dark-mode #notes-panel .editor-toolbar {
+            background: #3a3a3a;
+            border-bottom-color: #505050;
+        }
+
+        body.dark-mode #notes-panel .editor-toolbar button {
+            color: #e0e0e0 !important;
+        }
+
+        body.dark-mode #notes-panel .editor-toolbar button:hover {
+            background: #4a4a4a !important;
+            border-color: #606060 !important;
+        }
+
+        body.dark-mode #notes-panel .CodeMirror-cursor {
+            border-left-color: #e0e0e0;
         }
 
         body.dark-mode .chapter-nav {
@@ -828,7 +924,7 @@
                 <span>Chapter Notes (Markdown)</span>
                 <span id="save-status" style="font-size: 0.8em; color: #999;">Synced</span>
             </div>
-            <textarea id="note-editor" class="notes-editor" placeholder="Write your notes here... they will sync to Obsidian.">{{ note_content }}</textarea>
+            <textarea id="note-editor" class="notes-editor">{{ note_content }}</textarea>
         </div>
     </div>
 
@@ -1103,6 +1199,9 @@
             const message = chatInput.value.trim();
             if (!message) return false;
 
+            // Get current notes content from EasyMDE
+            const currentNotes = easyMDE ? easyMDE.value() : '';
+
             // Prepare JSON body
             const body = {
                 session_id: currentSessionId,
@@ -1112,7 +1211,7 @@
                 include_chapter: contextState.chapter,
                 include_notes: contextState.notes,
                 // Send current editor content to ensure fresh notes
-                current_notes: noteEditor.value,
+                current_notes: currentNotes,
                 // Send snippets
                 snippets: selectedSnippets.map(s => s.text)
             };
@@ -1444,14 +1543,63 @@
         const saveStatus = document.getElementById('save-status');
         let saveTimeout;
         let syncInterval;
-        let lastSavedContent = noteEditor.value;
+        let lastSavedContent = noteEditor ? noteEditor.value : '';
         let isUserTyping = false;
+        let easyMDE = null;
+
+        // Initialize EasyMDE
+        function initializeEasyMDE() {
+            if (easyMDE || !noteEditor) return;
+            
+            easyMDE = new EasyMDE({
+                element: noteEditor,
+                spellChecker: false,
+                status: false,
+                toolbar: [
+                    "bold", "italic", "heading", "|",
+                    "quote", "unordered-list", "ordered-list", "|",
+                    "link", "image", "|",
+                    "preview", "side-by-side", "fullscreen", "|",
+                    "guide"
+                ],
+                placeholder: "Write your notes here... they will sync to Obsidian.",
+                autosave: {
+                    enabled: false
+                },
+                renderingConfig: {
+                    singleLineBreaks: false,
+                    codeSyntaxHighlighting: true,
+                },
+                previewRender: function(plainText) {
+                    return marked.parse(plainText);
+                },
+                // Configuration CodeMirror pour masquer les symboles de formatage
+                hideIcons: [],
+                showIcons: [],
+            });
+
+            // Listen for changes
+            easyMDE.codemirror.on('change', () => {
+                isUserTyping = true;
+                saveStatus.textContent = "Typing...";
+                clearTimeout(saveTimeout);
+                saveTimeout = setTimeout(() => {
+                    saveNotes();
+                    isUserTyping = false;
+                }, 1000);
+            });
+
+            lastSavedContent = easyMDE.value();
+        }
 
         // Load preference - open if there's existing content or user preference
-        if (localStorage.getItem('notesPanelOpen') === 'true' || noteEditor.value.trim() !== "") {
+        const initialContent = noteEditor ? noteEditor.value.trim() : '';
+        if (localStorage.getItem('notesPanelOpen') === 'true' || initialContent !== "") {
             notesPanel.classList.add('open');
             const btnNotes = document.getElementById('btn-notes');
             if (btnNotes) btnNotes.classList.add('active');
+            // Initialize EasyMDE when panel is open
+            setTimeout(initializeEasyMDE, 100);
         }
 
         function toggleNotes() {
@@ -1472,6 +1620,8 @@
             // Start sync when opening, stop when closing
             if (!wasOpen && notesPanel.classList.contains('open')) {
                 startSync();
+                // Initialize EasyMDE when opening
+                setTimeout(initializeEasyMDE, 100);
             } else if (wasOpen) {
                 stopSync();
             }
@@ -1496,18 +1646,19 @@
 
         async function checkForExternalChanges() {
             // Don't sync if user is currently typing
-            if (isUserTyping) return;
+            if (isUserTyping || !easyMDE) return;
             
             try {
                 const response = await fetch('/api/notes/{{ book_id }}/{{ chapter_index }}');
                 if (response.ok) {
                     const data = await response.json();
                     const serverContent = data.content;
+                    const currentContent = easyMDE.value();
                     
                     // Only update if content changed and user hasn't modified locally
-                    if (serverContent !== noteEditor.value && serverContent !== lastSavedContent) {
+                    if (serverContent !== currentContent && serverContent !== lastSavedContent) {
                         // External change detected
-                        noteEditor.value = serverContent;
+                        easyMDE.value(serverContent);
                         lastSavedContent = serverContent;
                         saveStatus.textContent = "Synced from Obsidian";
                         setTimeout(() => { saveStatus.textContent = "Synced"; }, 2000);
@@ -1518,19 +1669,11 @@
             }
         }
 
-        noteEditor.addEventListener('input', () => {
-            isUserTyping = true;
-            saveStatus.textContent = "Typing...";
-            clearTimeout(saveTimeout);
-            saveTimeout = setTimeout(() => {
-                saveNotes();
-                isUserTyping = false;
-            }, 1000); // Autosave after 1s of inactivity
-        });
-
         async function saveNotes() {
+            if (!easyMDE) return;
+            
             saveStatus.textContent = "Saving...";
-            const content = noteEditor.value;
+            const content = easyMDE.value();
             
             try {
                 const response = await fetch('/api/notes/{{ book_id }}/{{ chapter_index }}', {
@@ -1706,6 +1849,8 @@
 
         // Lancer au chargement
         document.addEventListener('DOMContentLoaded', initializeHighlighter);
+
+
     </script>
 </body>
 </html>
